@@ -736,9 +736,26 @@
   `native_supported=1406..1407`, `native_projected=656..657`, and unsupported buckets down to
   `0/5/1/0/20`, then wrote
   `extracted\native_render_samples\native_83bd_projected_standard_20260718-064107.bmp` using `1397`
+  captured D3D11 draws.
+- The indexed stride-10 `VS=0xB21C8D7A8DB9B17A / PS=0x270B573E744D1ACB` projection family is now
+  promoted as `supported_projected_transform` behind an exact five-attribute single-palette
+  strip/effect layout gate (`fmt57@w0->t1i4`, `fmt6@w3->t1i0`, `fmt57@w4->t1i6`,
+  `fmt6@w7->t1i1`, `fmt37@w8->t1i0`). The layout-specific transform reads the palette byte from
+  word 3, applies `c13+a0..c15+a0`, reorders the projected source as `{z,x,y}`, projects through
+  `c9..c12`, uses raw word-8/word-9 UVs, and treats `0x00FF` as a local strip separator only for
+  this exact layout. Bounded shader/sample validation
+  `runtime.native-transform-probe-20260718-064544.log` exited `0` with event JSON off and capped
+  output. Focused validations `runtime.native-transform-probe-20260718-065016.log` and
+  `runtime.native-transform-probe-20260718-065130.log` exited `0`; the debug-fit BMP shows a
+  coherent long strip/effect and the real-clip BMP is black/offscreen. Standard validation
+  `runtime.native-b21c-projected-standard-20260718-065307.log` exited `0`, reported no
+  assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
+  `native_supported=1408..1409`, `native_projected=658..659`, and unsupported buckets down to
+  `0/5/1/0/18`, then wrote
+  `extracted\native_render_samples\native_b21c_projected_standard_20260718-065307.bmp` using `1398`
   captured D3D11 draws. The current repeated transform blocker is
-  `VS=0xB21C8D7A8DB9B17A / PS=0x270B573E744D1ACB`, stride-10 attrs-5; the repeated layout blocker is
-  `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+  `VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251`, non-indexed stride-8 attrs-2; the repeated layout
+  blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path
 

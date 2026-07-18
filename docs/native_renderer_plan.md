@@ -1240,9 +1240,35 @@ gameplay frames with `native_supported=1406..1407`, `native_tex=728`, `native_so
 `extracted\native_render_samples\native_83bd_projected_standard_20260718-064107.bmp` using `1397`
 captured D3D11 draws.
 
+The indexed stride-10 `VS=0xB21C8D7A8DB9B17A` / `PS=0x270B573E744D1ACB` family is now promoted as
+`supported_projected_transform` behind an exact five-attribute single-palette strip/effect layout:
+position `fmt57@w0->t1i4`, palette byte `fmt6@w3->t1i0`, normal-ish `fmt57@w4->t1i6`, packed
+material `fmt6@w7->t1i1`, and UV `fmt37@w8->t1i0`. The vertex shader reads the palette byte through
+`r0.y`, applies the selected `c13+a0..c15+a0` model rows, reorders the projected source as `{z,x,y}`,
+and projects through `c9..c12`. The UV fetch lands in `r0.zw`, so native replay uses the raw
+word-8/word-9 UVs instead of the generic `texcoord[0..1]` path. Saved index samples use `0x00FF`
+strip separators, so strip expansion treats that value as an additional restart only for the exact
+B21C layout.
+
+Bounded shader/sample validation `runtime.native-transform-probe-20260718-064544.log` exited `0`,
+kept event JSON off, and wrote 31 capped sample rows plus 180 shader dumps. Focused debug-fit
+validation `runtime.native-transform-probe-20260718-065016.log` exited `0` and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-065016.bmp` using one captured
+D3D11 draw; the BMP shows a coherent long strip/effect. The unfit validation
+`runtime.native-transform-probe-20260718-065130.log` also exited `0`, moved the first transform gap
+forward, and wrote `extracted\native_render_samples\native_projected_gap_replay_20260718-065130.bmp`,
+but the real-clip replay is black, so this family is treated as valid offscreen/sliver coverage.
+Standard no-JSON validation `runtime.native-b21c-projected-standard-20260718-065307.log` exited `0`,
+reported no assertion, fatal, crash, exception, or native replay failure lines, and reached repeated
+gameplay frames with `native_supported=1408..1409`, `native_tex=728`, `native_solid=12`,
+`native_depth=10`, `native_projected=658..659`, and
+`unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/18`. The replay wrote
+`extracted\native_render_samples\native_b21c_projected_standard_20260718-065307.bmp` using `1398`
+captured D3D11 draws.
+
 The next repeated transform blocker in the standard gameplay pass is
-`VS=0xB21C8D7A8DB9B17A / PS=0x270B573E744D1ACB`, an indexed stride-10 attrs-5 family with
-`attr_sig=0x595D5ABE4C6C64B4`. The repeated layout blocker is still
+`VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251`, a non-indexed stride-8 attrs-2 family with
+`attr_sig=0xBA6F4B89B307862B` and eight texture fetches. The repeated layout blocker is still
 `VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
 indexed layout gap, five shape gaps, remaining transform families, and native render-target
 composition still block full native scene ownership.
@@ -1263,10 +1289,10 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, and
-   83BD projected transform families can now be replayed; the remaining big gameplay gap is
-   decoding the B21C stride-10 family, the stride-7 layout blocker, other stride-8/9/10/11 model
-   vertex layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
+   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD,
+   and B21C projected transform families can now be replayed; the remaining big gameplay gap is
+   decoding the 3094 non-indexed stride-8 family, the stride-7 layout blocker, other stride-8/9/10/11
+   model vertex layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
    gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually
    inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
