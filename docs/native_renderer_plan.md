@@ -103,7 +103,7 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_projected_min_indices` | `0` | Optional minimum expanded index count for projected transform-gap replay draws. |
 | `sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter` | empty | Optional hex vertex-shader hash filter for projected transform-gap replay. |
 | `sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter` | empty | Optional hex pixel-shader hash filter for projected transform-gap replay. |
-| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-final-or-heuristic` compares both. |
+| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-bone0-final` applies the first upstream shader matrix block before the final projection; `shader-final-or-heuristic` compares the older final/heuristic paths. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 | `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
 | `dump_shaders` | empty | ReXGlue GPU cvar. When set to a folder, ReXGlue writes analyzed shader ucode and translated shader files there. Use only in short focused probes. |
@@ -868,6 +868,25 @@ a bounded gap sample probe, kept `native_render_events=false`, touched no event 
 (`542107` bytes). Every row had `64` vertex float constants and the maximum captured vertex
 constant index was `63`; the first `45C4DDDAAA10F75F / 7703E4142DFBD4D4` rows now include constants
 `c0..c63`.
+
+`-ProjectedGapMode shader-bone0-final-fit` now tests the first upstream transform block found in the
+`ED8D12865D27DEBF` and `45C4DDDAAA10F75F` shaders before the final `c0..c3` projection. It uses the
+constant rows `c6,c5,c4` with the shader-observed `wzxy` swizzle as a deliberate "bone/matrix zero"
+diagnostic, not as the final skinning solution.
+
+Validation `runtime.native-transform-probe-20260718-015443.log` filtered to
+`VS=0xED8D12865D27DEBF`, exited with code `0`, kept event JSON off, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-015443.bmp`. Candidate logs
+show `source=shader-bone0-c4-c6-c0-c3`, upstream constants `c6,c5,c4`, and `inside=1.000` for the
+retained stride-12 draws (`845/2415` and `1542/2853`). The BMP is a recognizable projected mesh
+rather than the earlier thin streak, proving the upstream shader/world block is necessary and useful.
+
+Validation `runtime.native-transform-probe-20260718-015800.log` filtered to
+`VS=0x45C4DDDAAA10F75F`, also exited with code `0`, kept event JSON off, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-015800.bmp`. The candidate
+math is finite and inside clip space for the stride-9 family, but the BMP is still stretched. That
+means this shader family needs fuller evaluation of the branch/weight/index path from the dumped
+ucode, not just the first-matrix diagnostic.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

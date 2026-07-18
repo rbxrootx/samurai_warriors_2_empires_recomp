@@ -505,6 +505,16 @@
   row carries `64` vertex constants, with maximum vertex constant index `63`, including rows for
   `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`. The old projection heuristic remains capped to
   its first-eight behavior so wider captures do not make runtime probing explode combinatorially.
+- `-ProjectedGapMode shader-bone0-final-fit` now applies the first upstream shader matrix block
+  before the final projection for the shared `ED8D12865D27DEBF` / `45C4DDDAAA10F75F` transform
+  skeleton. Validation `runtime.native-transform-probe-20260718-015443.log` filtered to
+  `VS=0xED8D12865D27DEBF`, kept event JSON off, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-015443.bmp`; candidate logs
+  show `source=shader-bone0-c4-c6-c0-c3`, upstream constants `c6,c5,c4`, and `inside=1.000` for the
+  retained stride-12 meshes. The sibling `45C4DDDAAA10F75F` validation
+  `runtime.native-transform-probe-20260718-015800.log` also stayed inside clip space but still
+  stretches visually, so the next renderer step is full branch/weight/index evaluation from the
+  dumped shader path rather than another arbitrary projection heuristic.
 
 ## Save And Storage Path
 

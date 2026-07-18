@@ -122,7 +122,8 @@ REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_projected_pixel_shader_fil
 
 REXCVAR_DEFINE_STRING(
     sw2e_native_renderer_gpu_replay_projection_strategy, "heuristic", "SM2/Native Render",
-    "Projected transform-gap projection strategy: heuristic, shader-final, or shader-final-or-heuristic");
+    "Projected transform-gap projection strategy: heuristic, shader-final, shader-bone0-final, "
+    "or shader-final-or-heuristic");
 
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps, false,
                     "SM2/Native Render",
@@ -183,12 +184,15 @@ struct TransformGapCounter {
 struct ProjectionCandidate {
   bool valid = false;
   bool column_major = false;
+  bool has_upstream_transform = false;
   const char* source = "none";
   float finite_ratio = 0.0f;
   float inside_ratio = 0.0f;
   float score = 0.0f;
   std::array<uint32_t, 4> constant_indices = {};
   std::array<std::array<float, 4>, 4> rows = {};
+  std::array<uint32_t, 3> upstream_constant_indices = {};
+  std::array<std::array<float, 4>, 3> upstream_rows = {};
   std::array<float, 3> ndc_mins = {};
   std::array<float, 3> ndc_maxs = {};
 };
@@ -523,15 +527,28 @@ std::array<float, 4> TransformNativeReplayPosition(
   return output;
 }
 
-ProjectionCandidate ScoreNativeReplayProjectionRows(
-    const std::vector<gpu_replay::ReplayVertex>& vertices,
-    const std::array<std::array<float, 4>, 4>& rows,
-    const std::array<uint32_t, 4>& constant_indices, bool column_major, const char* source) {
-  ProjectionCandidate candidate;
-  candidate.column_major = column_major;
-  candidate.source = source;
-  candidate.constant_indices = constant_indices;
-  candidate.rows = rows;
+std::array<float, 4> TransformNativeReplayPositionWithCandidate(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  gpu_replay::ReplayVertex projected_vertex = vertex;
+  if (projection.has_upstream_transform) {
+    const std::array<float, 4> source = {vertex.x, vertex.y, vertex.w, vertex.z};
+    std::array<float, 3> output = {};
+    for (uint32_t row = 0; row < 3; ++row) {
+      for (uint32_t component = 0; component < 4; ++component) {
+        output[row] += projection.upstream_rows[row][component] * source[component];
+      }
+    }
+    projected_vertex.x = output[0];
+    projected_vertex.y = output[1];
+    projected_vertex.z = output[2];
+    projected_vertex.w = 1.0f;
+  }
+  return TransformNativeReplayPosition(projected_vertex, projection.rows,
+                                       projection.column_major);
+}
+
+ProjectionCandidate ScoreNativeReplayProjectionCandidate(
+    ProjectionCandidate candidate, const std::vector<gpu_replay::ReplayVertex>& vertices) {
   if (vertices.size() < 3) {
     return candidate;
   }
@@ -550,7 +567,7 @@ ProjectionCandidate ScoreNativeReplayProjectionRows(
   for (size_t vertex_index = 0; vertex_index < vertices.size() && sampled_count < 256;
        vertex_index += sample_stride, ++sampled_count) {
     const std::array<float, 4> clip =
-        TransformNativeReplayPosition(vertices[vertex_index], rows, column_major);
+        TransformNativeReplayPositionWithCandidate(vertices[vertex_index], candidate);
     if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[2]) ||
         !std::isfinite(clip[3]) || std::abs(clip[3]) < 1e-6f) {
       continue;
@@ -599,6 +616,18 @@ ProjectionCandidate ScoreNativeReplayProjectionRows(
   return candidate;
 }
 
+ProjectionCandidate ScoreNativeReplayProjectionRows(
+    const std::vector<gpu_replay::ReplayVertex>& vertices,
+    const std::array<std::array<float, 4>, 4>& rows,
+    const std::array<uint32_t, 4>& constant_indices, bool column_major, const char* source) {
+  ProjectionCandidate candidate;
+  candidate.column_major = column_major;
+  candidate.source = source;
+  candidate.constant_indices = constant_indices;
+  candidate.rows = rows;
+  return ScoreNativeReplayProjectionCandidate(candidate, vertices);
+}
+
 const rex::graphics::native_render::FloatConstantSummary* FindNativeReplayFloatConstant(
     const DrawEvent& event, uint32_t constant_index) {
   const uint32_t constant_count =
@@ -633,17 +662,40 @@ bool BuildNativeReplaySwizzledProjectionRows(
   return true;
 }
 
+bool BuildNativeReplayBone0UpstreamRows(const DrawEvent& event,
+                                        std::array<uint32_t, 3>& constant_indices,
+                                        std::array<std::array<float, 4>, 3>& rows) {
+  constant_indices = {6, 5, 4};
+  for (uint32_t row = 0; row < 3; ++row) {
+    const auto* constant = FindNativeReplayFloatConstant(event, constant_indices[row]);
+    if (!constant) {
+      return false;
+    }
+    rows[row] = {constant->values[3], constant->values[2], constant->values[0],
+                 constant->values[1]};
+    for (float value : rows[row]) {
+      if (!std::isfinite(value)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
-    const DrawEvent& event, const std::vector<gpu_replay::ReplayVertex>& vertices) {
+    const DrawEvent& event, const std::vector<gpu_replay::ReplayVertex>& vertices,
+    bool include_bone0_upstream) {
   std::array<uint32_t, 4> constants = {};
   bool negate_y_row = false;
+  bool supports_bone0_upstream = false;
   const char* source = nullptr;
   switch (event.vertex_shader_hash) {
     case 0xED8D12865D27DEBFull:
     case 0x45C4DDDAAA10F75Full:
       constants = {0, 1, 2, 3};
       negate_y_row = true;
-      source = "shader-final-c0-c3";
+      supports_bone0_upstream = true;
+      source = include_bone0_upstream ? "shader-bone0-c4-c6-c0-c3" : "shader-final-c0-c3";
       break;
     case 0x1A2E173CABDD3E80ull:
       constants = {3, 4, 5, 6};
@@ -652,13 +704,24 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
     default:
       return {};
   }
+  include_bone0_upstream = include_bone0_upstream && supports_bone0_upstream;
 
   std::array<std::array<float, 4>, 4> rows = {};
   if (!BuildNativeReplaySwizzledProjectionRows(event, constants, negate_y_row, rows)) {
     return {};
   }
-  ProjectionCandidate candidate =
-      ScoreNativeReplayProjectionRows(vertices, rows, constants, false, source);
+  ProjectionCandidate candidate;
+  candidate.column_major = false;
+  candidate.source = source;
+  candidate.constant_indices = constants;
+  candidate.rows = rows;
+  if (include_bone0_upstream &&
+      !BuildNativeReplayBone0UpstreamRows(event, candidate.upstream_constant_indices,
+                                          candidate.upstream_rows)) {
+    return {};
+  }
+  candidate.has_upstream_transform = include_bone0_upstream;
+  candidate = ScoreNativeReplayProjectionCandidate(candidate, vertices);
   if (!candidate.valid &&
       REXCVAR_GET(sw2e_native_renderer_gpu_replay_normalize_projected_gaps) &&
       candidate.finite_ratio >= 0.5f) {
@@ -722,12 +785,13 @@ ProjectionCandidate FindNativeReplayProjectionCandidate(
       std::string(REXCVAR_GET(sw2e_native_renderer_gpu_replay_projection_strategy));
   const bool use_shader_final =
       strategy == "shader-final" || strategy == "shader-final-or-heuristic";
+  const bool use_shader_bone0 = strategy == "shader-bone0-final";
   const bool use_heuristic = strategy.empty() || strategy == "heuristic" ||
                              strategy == "shader-final-or-heuristic";
 
   ProjectionCandidate best;
-  if (use_shader_final) {
-    best = FindNativeReplayShaderFinalProjectionCandidate(event, vertices);
+  if (use_shader_final || use_shader_bone0) {
+    best = FindNativeReplayShaderFinalProjectionCandidate(event, vertices, use_shader_bone0);
   }
   if (use_heuristic) {
     ProjectionCandidate heuristic = FindNativeReplayHeuristicProjectionCandidate(event, vertices);
@@ -741,7 +805,7 @@ ProjectionCandidate FindNativeReplayProjectionCandidate(
 bool ProjectNativeReplayVertex(gpu_replay::ReplayVertex& vertex,
                                const ProjectionCandidate& projection) {
   const std::array<float, 4> clip =
-      TransformNativeReplayPosition(vertex, projection.rows, projection.column_major);
+      TransformNativeReplayPositionWithCandidate(vertex, projection);
   if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[2]) ||
       !std::isfinite(clip[3]) || std::abs(clip[3]) < 1e-6f) {
     return false;
@@ -1916,13 +1980,20 @@ class Sidecar final : public EventSink {
     replay_draw.texture.bytes_ref = std::move(texture_bytes_ref);
     QueueNativeGpuReplayDraw(std::move(replay_draw), "projected transform gap");
     if (native_gpu_replay_captured_draw_log_count_ <= kNativeGpuReplayDrawLogLimit) {
+      char upstream_constants[32] = "none";
+      if (projection.has_upstream_transform) {
+        std::snprintf(upstream_constants, sizeof(upstream_constants), "c%u,c%u,c%u",
+                      projection.upstream_constant_indices[0],
+                      projection.upstream_constant_indices[1],
+                      projection.upstream_constant_indices[2]);
+      }
       REXLOG_INFO(
           "SW2E projected transform gap candidate frame {} draw {} constants=c{},c{},c{},c{} "
-          "source={} orientation={} finite={:.3f} inside={:.3f} ndc=({:.4f},{:.4f},{:.4f}).."
-          "({:.4f},{:.4f},{:.4f}) score={:.3f}",
+          "upstream={} source={} orientation={} finite={:.3f} inside={:.3f} "
+          "ndc=({:.4f},{:.4f},{:.4f})..({:.4f},{:.4f},{:.4f}) score={:.3f}",
           event.frame_index, event.draw_index, projection.constant_indices[0],
           projection.constant_indices[1], projection.constant_indices[2],
-          projection.constant_indices[3], projection.source,
+          projection.constant_indices[3], upstream_constants, projection.source,
           projection.column_major ? "column" : "row", projection.finite_ratio,
           projection.inside_ratio, projection.ndc_mins[0], projection.ndc_mins[1],
           projection.ndc_mins[2], projection.ndc_maxs[0], projection.ndc_maxs[1],

@@ -56,6 +56,7 @@ materials, constants, and render-target ownership.
 | `docs/runtime_hooks.md` | Hook map and runtime behavior notes. |
 | `docs/modding_support.md` | Archive, G1M, stage, weapon, character, and Blender-facing modding notes. |
 | `docs/native_renderer_plan.md` | Native-renderer plan, validation notes, and next graphics milestones. |
+| `docs/external_tooling.md` | Public Koei/Omega Force tooling references and repo hygiene notes. |
 | `tools` | Extractors, converters, summaries, G1M OBJ export/patch tooling, and IDA label helpers. |
 | `mods/loose` | Local loose-file override root used by launch scripts. |
 
@@ -107,9 +108,11 @@ Useful launchers:
   gameplay transform-gap draws without enabling the large JSON event stream. Pass
   `-ProjectedGapMode constant-fit` to test the current constant-projection path with visibility
   normalization, `-ProjectedGapMode constant` for the strict unnormalized projection check, or
-  `-ProjectedGapMode shader-final-fit` to test the dumped-shader final projection block. The
-  underlying PowerShell probe also accepts `-ProjectedVertexShader`, `-ProjectedPixelShader`,
-  `-ProjectedGapMinIndices`, and `-DumpShaders` for focused shader-family analysis.
+  `-ProjectedGapMode shader-final-fit` to test the dumped-shader final projection block.
+  `-ProjectedGapMode shader-bone0-final-fit` adds the first upstream shader matrix block
+  (`c4-c6`) before the final projection. The underlying PowerShell probe also accepts
+  `-ProjectedVertexShader`, `-ProjectedPixelShader`, `-ProjectedGapMinIndices`, and `-DumpShaders`
+  for focused shader-family analysis.
 - `tools\apply_rexglue_native_render_wide_constants.ps1` patches a source ReXGlue SDK checkout so
   the native-render event stream captures up to 64 float constants per draw instead of 8. Use this
   with the local source SDK when working on gameplay shader transforms.
@@ -125,6 +128,21 @@ The modding path is intentionally SW2E-specific:
 - Future Blender importer/exporter work for stage and map editing.
 
 See `docs/modding_support.md` for the current file-format map.
+See `docs/external_tooling.md` for Project-G1M and other public tooling references used for
+cross-checking.
+
+Current support snapshot:
+
+| Area | Status |
+| --- | --- |
+| Playable runtime | Boots into menus/gameplay with current runtime hooks. |
+| Loose-file overlay | Available through `--mod_data_root` and `mods\loose`. |
+| `LINKDATA_BNS` catalog/repack | Tooling exists for cataloging, dry-run rebuilds, and patched archive previews. |
+| `LZP2` | Decode and literal encode tooling exists. |
+| `G1M` geometry | OBJ export and topology-preserving OBJ-to-G1M patching exist for known SW2E samples. |
+| `G1TG` textures | Runtime BC3 capture/decode is proven; archive-side texture editing still needs more validation. |
+| Animation | Identified as `G1A_`, not yet a finished edit/import path. |
+| Native renderer | Title/menu native D3D11 replay works; gameplay mesh projection is experimental. |
 
 ## Native Rendering Direction
 

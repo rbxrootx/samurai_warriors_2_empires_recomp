@@ -12,7 +12,7 @@ param(
   [string]$ProjectedVertexShader = "",
   [string]$ProjectedPixelShader = "",
   [switch]$DumpShaders,
-  [ValidateSet("debug-fit", "constant", "constant-fit", "shader-final", "shader-final-fit")]
+  [ValidateSet("debug-fit", "constant", "constant-fit", "shader-final", "shader-final-fit", "shader-bone0-final", "shader-bone0-final-fit")]
   [string]$ProjectedGapMode = "debug-fit",
   [switch]$ExternalPulseInput,
   [switch]$NoMoveWindow,
@@ -128,9 +128,13 @@ if ($DumpGapSamples) {
 if ($ProjectedGapReplay) {
   $probeArgs = @($probeArgs | Where-Object { $_ -ne "--sw2e_native_renderer_gpu_replay=false" })
   $projectedDebugFit = $ProjectedGapMode -eq "debug-fit"
-  $projectedNormalize = $ProjectedGapMode -eq "constant-fit" -or $ProjectedGapMode -eq "shader-final-fit"
+  $projectedNormalize = $ProjectedGapMode -eq "constant-fit" -or
+    $ProjectedGapMode -eq "shader-final-fit" -or
+    $ProjectedGapMode -eq "shader-bone0-final-fit"
   $projectionStrategy = if ($ProjectedGapMode -eq "shader-final" -or $ProjectedGapMode -eq "shader-final-fit") {
     "shader-final"
+  } elseif ($ProjectedGapMode -eq "shader-bone0-final" -or $ProjectedGapMode -eq "shader-bone0-final-fit") {
+    "shader-bone0-final"
   } else {
     "heuristic"
   }
