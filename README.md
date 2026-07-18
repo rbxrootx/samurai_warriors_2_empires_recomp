@@ -172,6 +172,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
   visible presentation ownership.
+- Capture full supported native replay passes at swap with
+  `--sw2e_native_renderer_gpu_replay_draw_limit=0`, so gameplay frames are not artificially capped
+  to small title/menu batches during ownership testing.
 - Keep the compatibility renderer as the reference path while native coverage grows.
 
 Near-term work:

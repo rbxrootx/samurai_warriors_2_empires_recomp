@@ -89,9 +89,9 @@ Relevant cvars:
 | `sw2e_native_renderer_dump_sample_limit` | `256` | Maximum unique samples to dump per run. |
 | `sw2e_native_renderer_dump_full_textures` | `false` | Dumps complete footprints for supported texture formats instead of only short hash samples. |
 | `sw2e_native_renderer_full_texture_max_bytes` | `8388608` | Maximum bytes allowed for one full texture dump. |
-| `sw2e_native_renderer_gpu_replay` | `false` | Captures supported live menu draws and replays them through an in-process native D3D11 path. |
+| `sw2e_native_renderer_gpu_replay` | `false` | Captures supported live draws and replays them through an in-process native D3D11 path. |
 | `sw2e_native_renderer_gpu_replay_path` | `extracted/native_render_samples/native_gpu_replay.bmp` | BMP output path for the D3D11 replay. |
-| `sw2e_native_renderer_gpu_replay_draw_limit` | `7` | Maximum title/menu draws captured for the native GPU replay. |
+| `sw2e_native_renderer_gpu_replay_draw_limit` | `7` | Maximum live draws captured before early native GPU replay completion; `0` waits for swap, useful for full supported-pass capture. |
 | `sw2e_native_renderer_gpu_replay_live_present` | `false` | Presents the captured title/menu replay in a child D3D11 window inside the game window. |
 | `sw2e_native_renderer_gpu_replay_live_present_limit` | `0` | Caps child-window live presents for smoke runs; `0` means unlimited. |
 | `sw2e_native_renderer_gpu_replay_suppress_backend_swap` | `false` | Opt-in presenter handoff: after a successful native live replay present of a fully covered frame, suppresses that frame's compatibility backend swap. |
@@ -1023,6 +1023,23 @@ captured the same depth rectangle, made two normal child-window D3D11 presents, 
 assertions, zero `[error]` lines, and zero `owns_frame=true` lines, and wrote the nonblank
 `extracted\native_render_samples\native_depthonly_live_present_20260718-040253.bmp`
 (`1280x720`, sampled `2296/2304` nonblack points, mean RGB `147.91`).
+
+Swap-completed full supported-pass capture is now possible. `sw2e_native_renderer_gpu_replay_draw_limit=0`
+used to disable capture because the draw-limit guard returned early; it now means "do not complete
+early by draw count, keep capturing until swap." The cvar range was raised from `0..256` to
+`0..4096`, so a gameplay frame with hundreds of supported draws can be tested without recompiling.
+Validation `runtime.native-swap-unlimited-menu-20260718-041016.log` exited `0`, produced zero
+`draw-limit` completions, completed `18` native replay passes by `swap`, and wrote nonblank
+`extracted\native_render_samples\native_swap_unlimited_menu_20260718-041016.bmp`. A longer
+auto-input validation `runtime.native-swap-unlimited-gameplay-20260718-041111.log` reached the
+large gameplay/UI pass and wrote
+`extracted\native_render_samples\native_swap_unlimited_gameplay_20260718-041111.bmp` using `751`
+captured D3D11 draws. That BMP is `1280x720`, sampled `2304/2304` nonblack points, mean RGB
+`102.4`. This is still not full native scene ownership: those frames still report
+`unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/401` to
+`0/5/1/0/423`, so transform/shape work remains before backend swap suppression can be enabled for
+the battle scene. The run's `[error]` hits were the known compatibility-backend resolve failures,
+not native replay assertions.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

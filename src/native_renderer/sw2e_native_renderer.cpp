@@ -65,15 +65,16 @@ REXCVAR_DEFINE_INT32(sw2e_native_renderer_full_texture_max_bytes, 8 * 1024 * 102
     .range(0, 64 * 1024 * 1024);
 
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay, false, "SM2/Native Render",
-                    "Capture supported live menu draws and replay them through a native PC GPU path");
+                    "Capture supported live draws and replay them through a native PC GPU path");
 
 REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_path,
                       "extracted/native_render_samples/native_gpu_replay.bmp",
-                      "SM2/Native Render", "Output BMP path for native GPU menu replay");
+                      "SM2/Native Render", "Output BMP path for native GPU replay");
 
 REXCVAR_DEFINE_INT32(sw2e_native_renderer_gpu_replay_draw_limit, 7, "SM2/Native Render",
-                     "Maximum live menu draws captured for the native GPU replay")
-    .range(0, 256);
+                     "Maximum live draws captured before early native GPU replay completion; 0 "
+                     "waits for swap")
+    .range(0, 4096);
 
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_live_present, false, "SM2/Native Render",
                     "Present the captured native GPU replay in a child D3D11 window");
@@ -1991,9 +1992,9 @@ class Sidecar final : public EventSink {
     const int32_t draw_limit = REXCVAR_GET(sw2e_native_renderer_gpu_replay_draw_limit);
     const bool transform_gaps_only =
         REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gaps_only);
-    if (draw_limit <= 0 ||
-        (!transform_gaps_only &&
-         native_gpu_replay_draws_.size() >= static_cast<size_t>(draw_limit))) {
+    const bool has_draw_limit = draw_limit > 0;
+    if (!transform_gaps_only && has_draw_limit &&
+        native_gpu_replay_draws_.size() >= static_cast<size_t>(draw_limit)) {
       return;
     }
 
@@ -2020,8 +2021,12 @@ class Sidecar final : public EventSink {
     }
 
     if (transform_gaps_only) {
+      if (!has_draw_limit) {
+        return;
+      }
       PruneNativeGpuReplayDrawsToLimit(static_cast<size_t>(draw_limit));
-    } else if (native_gpu_replay_draws_.size() >= static_cast<size_t>(draw_limit)) {
+    } else if (has_draw_limit &&
+               native_gpu_replay_draws_.size() >= static_cast<size_t>(draw_limit)) {
       CompleteNativeGpuReplayPass("draw-limit");
     }
   }

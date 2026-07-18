@@ -598,6 +598,20 @@
   zero `[error]` lines, zero assertions, and zero `owns_frame=true` lines, then wrote
   `extracted\native_render_samples\native_depthonly_live_present_20260718-040253.bmp`; a sampled
   `1280x720` grid found `2296/2304` nonblack points with mean RGB `147.91`.
+- `sw2e_native_renderer_gpu_replay_draw_limit=0` now means "capture until swap" instead of
+  disabling native replay capture, and the cvar range is now `0..4096` instead of `0..256`. This
+  removes the artificial cap that prevented full supported-pass capture in gameplay frames.
+  Validation `runtime.native-swap-unlimited-menu-20260718-041016.log` exited `0`, produced zero
+  `draw-limit` completions, completed `18` replay passes by `swap`, and wrote nonblank
+  `extracted\native_render_samples\native_swap_unlimited_menu_20260718-041016.bmp`. Longer
+  auto-input validation `runtime.native-swap-unlimited-gameplay-20260718-041111.log` exited `0`,
+  reached repeated gameplay frames with `native_supported=750`, `native_tex=728`, `native_solid=12`,
+  `native_depth=10`, and wrote
+  `extracted\native_render_samples\native_swap_unlimited_gameplay_20260718-041111.bmp` using `751`
+  captured D3D11 draws. The sampled `1280x720` BMP was fully nonblack (`2304/2304`, mean RGB
+  `102.4`). Native scene ownership is still blocked by the remaining unsupported transform/shape
+  buckets (`0/5/1/0/401` to `0/5/1/0/423` in that run); the matched `[error]` lines were the known
+  compatibility-backend resolve errors.
 
 ## Save And Storage Path
 
