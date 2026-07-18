@@ -1306,6 +1306,15 @@ black RGB with alpha only; this is a coverage/projection checkpoint, not a final
 The remaining shape gaps, transform families, and native render-target composition still block full
 native scene ownership.
 
+Broad follow-up probe `runtime.native-transform-probe-20260718-075605.log` is useful as a
+correlation checkpoint rather than a visual pass. The wrapper closed the process and did not write a
+replay BMP, but the runtime log reached the same stage streaming moment: `LINK_SEBANK.HDX/BDX`
+opens, archive entries `1584-1601`, repeated `G1M_`/`G1TG` reads, and projected transform gap draws
+25+ in frame 2822. The candidate route was finite but offscreen with `shader-final-c0-c3`
+(`inside=0.000`, NDC clustered around `x=-1.50`, `y=-4.96`, `z=3.37`). This should not be promoted
+blindly as visible native rendering, but it is a strong asset-to-draw breadcrumb for the Blender/map
+editor and full-native renderer paths.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the

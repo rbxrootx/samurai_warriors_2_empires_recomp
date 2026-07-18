@@ -984,6 +984,13 @@
   `2944`, and `2945` were captured. Entries `2943` and `2944` came from the first-two stage loader
   path, and entry `2945` came from `0x82286D10` at LR `0x82286E20`, matching the alternate
   `3 * stage_id + 2939` formula with `stage_id = 2`.
+- `runtime.native-transform-probe-20260718-075605.log` did not produce a replay BMP, but it did
+  reach a high-value stage/render correlation point without using the large JSON stream. In the same
+  short window the game opened `game:\data\LINK_SEBANK.HDX/BDX`, streamed archive entries
+  `1584-1601`, logged repeated `G1M_`/`G1TG` results, then captured projected transform gap draws in
+  frame 2822. The projection candidates were finite but offscreen through `shader-final-c0-c3`, so
+  this is not a visible-render success; it is the best current breadcrumb connecting a stage asset
+  batch to native draw work.
 
 ## Next Hook Candidates
 

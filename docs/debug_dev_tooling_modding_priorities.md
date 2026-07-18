@@ -94,6 +94,7 @@ High-signal entry ranges and tables:
 | `2505-2681` | Texture-heavy bank. | UI, portraits, icons, shared battle textures. |
 | `2856-2990` | Stage/map groups, mostly three-entry sets. | Blender/map editor foundation. |
 | `2943-2945` | Runtime-confirmed alternate stage group for a battle path. | Use as a live correlation target. |
+| `1584-1601` | Broad render probe correlation: `LINK_SEBANK` opens, repeated `G1M_`/`G1TG` loads, then projected draw gaps in frame 2822. | Asset-to-draw matching for Blender/map-editor and native renderer work. |
 | `3548` / `0xDDC` | Save thumbnail PNG loaded by save flow. | Save/profile marker, not gameplay-critical. |
 
 Stage groups are the cleanest Blender path right now. A normal stage group is:

@@ -700,6 +700,13 @@ bundle. Current outputs:
 | `extracted\linkdata_bns_samples\runtime_stage_2943_g1m_chunks.csv` | Expanded `G1MG` geometry sections for the runtime-confirmed alternate stage-model bundle. |
 | `extracted\linkdata_bns_samples\character_models_1566_1573_g1m_chunks.csv` | Expanded `G1MG` geometry sections for eight character-range model samples. |
 
+The broad stage/render probe `runtime.native-transform-probe-20260718-075605.log` adds a practical
+runtime correlation point: immediately before projected native draw gaps in frame 2822, the game
+opens `game:\data\LINK_SEBANK.HDX/BDX` and loads archive entries `1584-1601`. The sector-level read
+results show repeated `G1M_` and `G1TG` payloads. This makes entries `1584-1601` a concrete
+asset-to-draw target for the next Blender/map-editor pass, while entries `2943-2945` remain the
+confirmed alternate stage group from the earlier asset-hook smoke.
+
 ### External Tooling Leads
 
 Existing public tools are useful for comparison and format sanity checks:

@@ -34,6 +34,9 @@ References:
 - Loose-file mod overlay support exists through `--mod_data_root`.
 - `LINKDATA_BNS.IDX/LNK`, LZP2 packing, stage bundles, G1M/G1MG geometry, and archive ranges are
   documented under `docs/`.
+- A bounded no-JSON stage probe now correlates `LINK_SEBANK` opens, archive entries `1584-1601`,
+  repeated `G1M_`/`G1TG` loads, and the projected native draw family in the same frame. That gives
+  the map-editor path a concrete asset-to-draw target.
 - Native-renderer sidecar work can observe draw/swap events, hash or dump bounded guest memory,
   classify render-state buckets, and replay supported title/menu draw families through a native
   D3D11 path.
@@ -205,6 +208,11 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   exact layout with `c4..c6` upstream rows and `c0..c3` projection rows. Focused validation queues it
   and writes a replay BMP, but the sampled route is offscreen/black RGB, so this is a coverage
   checkpoint rather than final visual fidelity.
+  A later broad no-JSON probe (`runtime.native-transform-probe-20260718-075605.log`) did not write a
+  replay BMP, but it did capture the same stage streaming moment: `LINK_SEBANK` opens, archive
+  entries `1584-1601`, repeated `G1M_`/`G1TG` reads, and projected draw-25+ gaps using the
+  `shader-final-c0-c3` candidate path. Treat that run as asset/render correlation evidence, not as a
+  visual validation pass.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
