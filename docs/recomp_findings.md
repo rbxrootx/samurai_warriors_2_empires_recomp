@@ -688,9 +688,24 @@
   repeated gameplay frames with `native_supported=1382`, `native_projected=632`, and unsupported
   buckets down to `0/5/1/0/44`, then wrote
   `extracted\native_render_samples\native_6b72_projected_standard_20260718-060328.bmp` using
-  `1397` captured D3D11 draws. The current repeated transform blocker is now the shared
-  `VS=0xED8D12865D27DEBF / PS=0x7703E4142DFBD4D4` stride-12 attrs-4 family; the repeated layout
-  blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+  `1397` captured D3D11 draws.
+- The indexed stride-12 `VS=0xED8D12865D27DEBF / PS=0x7703E4142DFBD4D4` projection family is now
+  promoted as `supported_projected_transform` behind an exact four-attribute shared-skin layout gate
+  (`fmt57@w0->t1i1`, `fmt37@w3->t1i0`, `fmt6@w5->t1i3`, `fmt37@w10->t1i2`). The layout-specific
+  decoder preserves the shader's `r1.1zyx` / `r1.xywz` position ordering, reads UV directly from
+  words `10..11`, skins through the shared `c4..c6` block, and projects through `c0..c3`. Strip
+  expansion treats `0x00FF` as a local separator only for this exact layout. Focused validations
+  `runtime.native-transform-probe-20260718-061114.log` and
+  `runtime.native-transform-probe-20260718-061413.log` exited `0`, kept event JSON off, and wrote
+  fit and unfit BMPs; the unfit replay shows a small real screen-space cloth/banner-like draw.
+  Standard validation `runtime.native-ed8d-projected-standard-20260718-061536.log` exited `0`,
+  reported no assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay
+  frames with `native_supported=1390`, `native_projected=640`, and unsupported buckets down to
+  `0/5/1/0/36`, then wrote
+  `extracted\native_render_samples\native_ed8d_projected_standard_20260718-061536.bmp` using `1397`
+  captured D3D11 draws. The current repeated transform blocker is
+  `VS=0x6E10B025BC817893 / PS=0x1C9617B76D4A368A`, stride-10 attrs-5; the repeated layout blocker is
+  `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path
 

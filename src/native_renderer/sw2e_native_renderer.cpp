@@ -563,6 +563,40 @@ bool IsNativeReplay6B72ModelVertexFetch(const VertexFetchSummary& fetch) {
          texcoord_attribute.result_swizzle == 2116;
 }
 
+bool IsNativeReplayED8DSharedSkinVertexFetch(const VertexFetchSummary& fetch) {
+  const uint32_t attribute_count =
+      std::min(fetch.attribute_summary_count,
+               rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+  if (fetch.stride_words != 12 || attribute_count != 4) {
+    return false;
+  }
+
+  const VertexAttributeSummary& position_attribute = fetch.attributes[0];
+  const VertexAttributeSummary& weight_attribute = fetch.attributes[1];
+  const VertexAttributeSummary& packed_attribute = fetch.attributes[2];
+  const VertexAttributeSummary& texcoord_attribute = fetch.attributes[3];
+  return position_attribute.data_format == kXenosVertexFormat32_32_32Float &&
+         position_attribute.offset_words == 0 &&
+         position_attribute.result_storage_target == 1 &&
+         position_attribute.result_storage_index == 1 &&
+         position_attribute.result_swizzle == 85 &&
+         weight_attribute.data_format == kXenosVertexFormat32_32Float &&
+         weight_attribute.offset_words == 3 &&
+         weight_attribute.result_storage_target == 1 &&
+         weight_attribute.result_storage_index == 0 &&
+         weight_attribute.result_swizzle == 2060 &&
+         packed_attribute.data_format == kXenosFormat8888 &&
+         packed_attribute.offset_words == 5 &&
+         packed_attribute.result_storage_target == 1 &&
+         packed_attribute.result_storage_index == 3 &&
+         packed_attribute.result_swizzle == 83 &&
+         texcoord_attribute.data_format == kXenosVertexFormat32_32Float &&
+         texcoord_attribute.offset_words == 10 &&
+         texcoord_attribute.result_storage_target == 1 &&
+         texcoord_attribute.result_storage_index == 2 &&
+         texcoord_attribute.result_swizzle == 2312;
+}
+
 bool CanDecodeNativeReplayTexturedVertexFetch(const VertexFetchSummary& fetch) {
   if (FindNativeReplayPositionAttribute(fetch) && FindNativeReplayTexcoordAttribute(fetch)) {
     return true;
@@ -577,6 +611,16 @@ bool IsNativeReplayScreenSpaceTexturedVertexFetch(const VertexFetchSummary& fetc
 bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_stride_bytes,
                                       const VertexFetchSummary& fetch,
                                       gpu_replay::ReplayVertex& replay_vertex) {
+  if (IsNativeReplayED8DSharedSkinVertexFetch(fetch) && vertex_stride_bytes >= 48) {
+    replay_vertex.x = 1.0f;
+    replay_vertex.y = ReadF32(vertex + 8, fetch.endian);
+    replay_vertex.z = ReadF32(vertex + 4, fetch.endian);
+    replay_vertex.w = ReadF32(vertex + 0, fetch.endian);
+    replay_vertex.u = ReadF32(vertex + 40, fetch.endian);
+    replay_vertex.v = ReadF32(vertex + 44, fetch.endian);
+    return true;
+  }
+
   if (IsNativeReplay6B72ModelVertexFetch(fetch) && vertex_stride_bytes >= 36) {
     replay_vertex.x = ReadF32(vertex + 0, fetch.endian);
     replay_vertex.y = ReadF32(vertex + 4, fetch.endian);
@@ -1614,6 +1658,13 @@ bool ExpandNativeReplayTriangleStripIndices(const std::vector<uint32_t>& strip_i
   return !triangle_indices.empty();
 }
 
+uint32_t NativeReplayTriangleStripRestartOverrideForFetch(const VertexFetchSummary& fetch) {
+  return (IsNativeReplay6B72ModelVertexFetch(fetch) ||
+          IsNativeReplayED8DSharedSkinVertexFetch(fetch))
+             ? 0xFFu
+             : kNativeReplayNoRestartOverride;
+}
+
 bool BuildNativeReplayTriangleStripIndices(const DrawEvent& event,
                                            std::vector<uint32_t>& triangle_indices) {
   std::vector<uint32_t> strip_indices;
@@ -2071,6 +2122,10 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0x1C9E2812AEBDBE4Eull &&
       event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
+  const bool ed8d_stride12_projected =
+      event.vertex_shader_hash == 0xED8D12865D27DEBFull &&
+      event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
   const bool character_stride11_projected =
       event.vertex_shader_hash == 0x1B2E9C6960B0C86Eull &&
       event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
@@ -2087,7 +2142,8 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0x6B722207E8ECA2B6ull &&
       event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
-  if ((!d5_projected && !indexed_stride11_projected && !character_stride11_projected &&
+  if ((!d5_projected && !indexed_stride11_projected && !ed8d_stride12_projected &&
+       !character_stride11_projected &&
        !a395_stride10_projected && !indexed_stride9_projected && !model_stride9_projected) ||
       !HasNativeReplayColorOutput(event) ||
       event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
@@ -2101,6 +2157,9 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
   }
   if ((indexed_stride11_projected || character_stride11_projected) &&
       vertex_fetch->stride_words != 11) {
+    return false;
+  }
+  if (ed8d_stride12_projected && !IsNativeReplayED8DSharedSkinVertexFetch(*vertex_fetch)) {
     return false;
   }
   if (a395_stride10_projected && vertex_fetch->stride_words != 10) {
@@ -2499,9 +2558,8 @@ class Sidecar final : public EventSink {
     if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
       std::vector<uint32_t> triangle_indices;
       const uint32_t restart_index_override =
-          event.indexed && IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)
-              ? 0xFFu
-              : kNativeReplayNoRestartOverride;
+          event.indexed ? NativeReplayTriangleStripRestartOverrideForFetch(*vertex_fetch)
+                        : kNativeReplayNoRestartOverride;
       const bool expanded = event.indexed
                                 ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
                                                                          event.index_format,
@@ -2754,9 +2812,8 @@ class Sidecar final : public EventSink {
     if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
       std::vector<uint32_t> triangle_indices;
       const uint32_t restart_index_override =
-          event.indexed && IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)
-              ? 0xFFu
-              : kNativeReplayNoRestartOverride;
+          event.indexed ? NativeReplayTriangleStripRestartOverrideForFetch(*vertex_fetch)
+                        : kNativeReplayNoRestartOverride;
       const bool expanded = event.indexed
                                 ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
                                                                          event.index_format,
