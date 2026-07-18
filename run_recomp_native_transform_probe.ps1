@@ -2,6 +2,9 @@ param(
   [int]$DurationSeconds = 90,
   [int]$InitialDelaySeconds = 8,
   [string]$Monitor = "nonprimary",
+  [switch]$DumpGapSamples,
+  [int]$SampleLimit = 128,
+  [int]$SampleBytes = 65536,
   [switch]$ExternalPulseInput,
   [switch]$NoMoveWindow,
   [switch]$KeepOpen
@@ -23,6 +26,7 @@ $moveScript = Join-Path $root "tools\move_recomp_window.ps1"
 $pulseScript = Join-Path $root "tools\pulse_recomp_input.ps1"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $logFile = Join-Path $root "runtime.native-transform-probe-$timestamp.log"
+$sampleRoot = Join-Path $root "extracted\native_render_samples\native_gap_probe_$timestamp"
 
 if (-not (Test-Path $exe)) {
   throw "Recomp executable was not found: $exe"
@@ -91,6 +95,24 @@ $probeArgs = @(
   "--sw2e_auto_boot_input=true",
   "--sw2e_auto_probe_input=true"
 )
+
+if ($DumpGapSamples) {
+  $probeArgs = @(
+    "--native_render_events=false",
+    "--sw2e_native_renderer=true",
+    "--sw2e_native_renderer_log_interval=15",
+    "--sw2e_native_renderer_hash_memory=true",
+    "--sw2e_native_renderer_memory_hash_bytes=$SampleBytes",
+    "--sw2e_native_renderer_dump_samples=true",
+    "--sw2e_native_renderer_dump_gap_samples_only=true",
+    "--sw2e_native_renderer_dump_priority_samples_only=false",
+    "--sw2e_native_renderer_dump_sample_limit=$SampleLimit",
+    "--sw2e_native_renderer_sample_root=$sampleRoot",
+    "--sw2e_native_renderer_gpu_replay=false",
+    "--sw2e_auto_boot_input=true",
+    "--sw2e_auto_probe_input=true"
+  )
+}
 
 $gameArgs = @(
   "--game_data_root=$gameRoot",
@@ -216,6 +238,19 @@ if (Test-Path $logFile) {
   $problemMatches = @(Select-String -Path $logFile -Pattern "fatal|assert|crash|exception|\[error\]" -ErrorAction SilentlyContinue | Select-Object -First 8)
 }
 
+$sampleManifest = Join-Path $sampleRoot "samples.jsonl"
+$sampleRowCount = 0
+$sampleKindCounts = @()
+$sampleSupportCounts = @()
+if (Test-Path $sampleManifest) {
+  $sampleRows = @(Get-Content -Path $sampleManifest | ForEach-Object { $_ | ConvertFrom-Json })
+  $sampleRowCount = $sampleRows.Count
+  $sampleKindCounts = @($sampleRows | Group-Object kind | Sort-Object Count -Descending |
+    ForEach-Object { "$($_.Name)=$($_.Count)" })
+  $sampleSupportCounts = @($sampleRows | Group-Object native_replay_support |
+    Sort-Object Count -Descending | ForEach-Object { "$($_.Name)=$($_.Count)" })
+}
+
 $eventTouched = @()
 foreach ($candidate in $eventCandidates) {
   if (-not (Test-Path $candidate)) {
@@ -240,6 +275,10 @@ if ($process.HasExited) {
   ClosedByProbe = $closedByProbe
   NativeRenderEvents = "false"
   EventJsonTouched = $eventTouched
+  SampleRoot = $(if ($DumpGapSamples) { $sampleRoot } else { $null })
+  SampleRows = $sampleRowCount
+  SampleKindCounts = $sampleKindCounts
+  SampleSupportCounts = $sampleSupportCounts
   TransformGapCount = $transformMatches.Count
   LayoutGapCount = $layoutMatches.Count
   FirstTransformGaps = @($transformMatches | Select-Object -First 6 | ForEach-Object { $_.Line })

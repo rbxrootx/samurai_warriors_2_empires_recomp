@@ -42,6 +42,9 @@ REXCVAR_DEFINE_BOOL(sw2e_native_renderer_dump_samples, false, "SM2/Native Render
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_dump_priority_samples_only, false, "SM2/Native Render",
                     "Only dump samples from indexed, strip, model-layout, or multi-texture draws");
 
+REXCVAR_DEFINE_BOOL(sw2e_native_renderer_dump_gap_samples_only, false, "SM2/Native Render",
+                    "Only hash/dump samples from unsupported native layout/transform gap draws");
+
 REXCVAR_DEFINE_STRING(sw2e_native_renderer_sample_root, "extracted/native_render_samples",
                       "SM2/Native Render", "Folder for native-renderer guest-memory samples");
 
@@ -815,6 +818,38 @@ enum class NativeReplaySupport {
   kUnsupportedTransform,
 };
 
+const char* NativeReplaySupportName(NativeReplaySupport support) {
+  switch (support) {
+    case NativeReplaySupport::kNoOutputSkipCandidate:
+      return "no_output_skip";
+    case NativeReplaySupport::kSupportedTextured:
+      return "supported_textured";
+    case NativeReplaySupport::kSupportedIndexedTextured:
+      return "supported_indexed_textured";
+    case NativeReplaySupport::kSupportedSolid:
+      return "supported_solid";
+    case NativeReplaySupport::kDepthOnly:
+      return "depth_only";
+    case NativeReplaySupport::kUnsupportedIndexed:
+      return "unsupported_indexed";
+    case NativeReplaySupport::kUnsupportedShape:
+      return "unsupported_shape";
+    case NativeReplaySupport::kUnsupportedLayout:
+      return "unsupported_layout";
+    case NativeReplaySupport::kUnsupportedTexture:
+      return "unsupported_texture";
+    case NativeReplaySupport::kUnsupportedTransform:
+      return "unsupported_transform";
+    default:
+      return "unknown";
+  }
+}
+
+bool IsNativeReplayGapSupport(NativeReplaySupport support) {
+  return support == NativeReplaySupport::kUnsupportedLayout ||
+         support == NativeReplaySupport::kUnsupportedTransform;
+}
+
 NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
   if (IsNativeNoOutputSkipCandidate(event)) {
     return NativeReplaySupport::kNoOutputSkipCandidate;
@@ -1002,7 +1037,7 @@ class Sidecar final : public EventSink {
       stats_.max_vertex_fetch_end = std::max(stats_.max_vertex_fetch_end, end);
     }
 
-    HashGuestMemorySamples(event, context);
+    HashGuestMemorySamples(event, context, replay_support);
     CaptureNativeGpuReplayDraw(event, context);
     CountShaderPair(event.vertex_shader_hash, event.pixel_shader_hash);
   }
@@ -1491,13 +1526,23 @@ class Sidecar final : public EventSink {
     ++stats_.other_layout_gap_draws;
   }
 
-  void HashGuestMemorySamples(const DrawEvent& event, const DrawEventContext& context) {
+  bool ShouldSampleDraw(const DrawEvent& event, NativeReplaySupport replay_support) const {
+    if (REXCVAR_GET(sw2e_native_renderer_dump_gap_samples_only)) {
+      return IsNativeReplayGapSupport(replay_support);
+    }
+    if (REXCVAR_GET(sw2e_native_renderer_dump_priority_samples_only)) {
+      return IsPrioritySampleDraw(event);
+    }
+    return true;
+  }
+
+  void HashGuestMemorySamples(const DrawEvent& event, const DrawEventContext& context,
+                              NativeReplaySupport replay_support) {
     if (!REXCVAR_GET(sw2e_native_renderer_hash_memory) || !context.memory) {
       return;
     }
 
-    if (REXCVAR_GET(sw2e_native_renderer_dump_priority_samples_only) &&
-        !IsPrioritySampleDraw(event)) {
+    if (!ShouldSampleDraw(event, replay_support)) {
       return;
     }
 
@@ -1517,9 +1562,11 @@ class Sidecar final : public EventSink {
         MixHash(stats_.index_memory_hash, hash);
         ++stats_.hashed_index_buffers;
         stats_.index_sample_bytes += bytes_hashed;
-        if (auto sample_path = MaybeDumpSample('i', event, 0, event.index_guest_base,
-                                               bytes_hashed, hash, context.memory)) {
-          WriteIndexSampleMetadata(event, index_bytes_needed, bytes_hashed, hash, *sample_path);
+        if (auto sample_path = MaybeDumpSample('i', event, replay_support, 0,
+                                               event.index_guest_base, bytes_hashed, hash,
+                                               context.memory)) {
+          WriteIndexSampleMetadata(event, replay_support, index_bytes_needed, bytes_hashed, hash,
+                                   *sample_path);
         }
       }
     }
@@ -1534,10 +1581,11 @@ class Sidecar final : public EventSink {
         MixHash(stats_.vertex_memory_hash, hash);
         ++stats_.hashed_vertex_fetches;
         stats_.vertex_sample_bytes += bytes_hashed;
-        if (auto sample_path = MaybeDumpSample('v', event, fetch.fetch_constant,
-                                               fetch.address_bytes, bytes_hashed, hash,
-                                               context.memory)) {
-          WriteVertexSampleMetadata(event, fetch, bytes_hashed, hash, *sample_path);
+        if (auto sample_path = MaybeDumpSample('v', event, replay_support,
+                                               fetch.fetch_constant, fetch.address_bytes,
+                                               bytes_hashed, hash, context.memory)) {
+          WriteVertexSampleMetadata(event, replay_support, fetch, bytes_hashed, hash,
+                                    *sample_path);
         }
       }
     }
@@ -1552,16 +1600,18 @@ class Sidecar final : public EventSink {
         MixHash(stats_.texture_memory_hash, hash);
         ++stats_.hashed_texture_fetches;
         stats_.texture_sample_bytes += bytes_hashed;
-        if (auto sample_path = MaybeDumpSample('t', event, fetch.fetch_constant,
-                                               fetch.base_address_bytes, bytes_hashed, hash,
-                                               context.memory)) {
-          WriteTextureSampleMetadata(event, fetch, dump_plan, bytes_hashed, hash, *sample_path);
+        if (auto sample_path = MaybeDumpSample('t', event, replay_support,
+                                               fetch.fetch_constant, fetch.base_address_bytes,
+                                               bytes_hashed, hash, context.memory)) {
+          WriteTextureSampleMetadata(event, replay_support, fetch, dump_plan, bytes_hashed, hash,
+                                     *sample_path);
         }
       }
     }
   }
 
   std::optional<std::filesystem::path> MaybeDumpSample(char kind, const DrawEvent& event,
+                                                       NativeReplaySupport replay_support,
                                                        uint32_t fetch_constant, uint32_t address,
                                                        uint32_t size, uint64_t hash,
                                                        const rex::memory::Memory* memory) {
@@ -1569,8 +1619,7 @@ class Sidecar final : public EventSink {
       return std::nullopt;
     }
 
-    if (REXCVAR_GET(sw2e_native_renderer_dump_priority_samples_only) &&
-        !IsPrioritySampleDraw(event)) {
+    if (!ShouldSampleDraw(event, replay_support)) {
       return std::nullopt;
     }
 
@@ -1637,22 +1686,25 @@ class Sidecar final : public EventSink {
   }
 
   void WriteSampleMetadataPrefix(const DrawEvent& event, const std::filesystem::path& sample_path,
-                                 const char* kind, uint32_t fetch_constant, uint32_t address,
-                                 uint32_t sampled_size, uint64_t hash) {
+                                 NativeReplaySupport replay_support, const char* kind,
+                                 uint32_t fetch_constant, uint32_t address, uint32_t sampled_size,
+                                 uint64_t hash) {
     std::fprintf(
         sample_metadata_file_,
         "{\"event\":\"sample\",\"kind\":\"%s\",\"file\":\"%s\",\"frame\":%u,\"draw\":%u,"
         "\"fetch_constant\":%u,\"address\":\"0x%08X\",\"sampled_size\":%u,"
-        "\"hash\":\"0x%016llX\",\"primitive\":%u,\"index_count\":%u,\"indexed\":%s,"
+        "\"hash\":\"0x%016llX\",\"native_replay_support\":\"%s\","
+        "\"primitive\":%u,\"index_count\":%u,\"indexed\":%s,"
         "\"vertex_shader\":\"0x%016llX\",\"pixel_shader\":\"0x%016llX\"",
         kind, sample_path.filename().string().c_str(), event.frame_index, event.draw_index,
         fetch_constant, address, sampled_size, static_cast<unsigned long long>(hash),
+        NativeReplaySupportName(replay_support),
         event.primitive_type, event.index_count, event.indexed ? "true" : "false",
         static_cast<unsigned long long>(event.vertex_shader_hash),
         static_cast<unsigned long long>(event.pixel_shader_hash));
   }
 
-  void WriteVertexSampleMetadata(const DrawEvent& event,
+  void WriteVertexSampleMetadata(const DrawEvent& event, NativeReplaySupport replay_support,
                                  const rex::graphics::native_render::VertexFetchSummary& fetch,
                                  uint32_t sampled_size, uint64_t hash,
                                  const std::filesystem::path& sample_path) {
@@ -1660,7 +1712,7 @@ class Sidecar final : public EventSink {
       return;
     }
 
-    WriteSampleMetadataPrefix(event, sample_path, "vertex", fetch.fetch_constant,
+    WriteSampleMetadataPrefix(event, sample_path, replay_support, "vertex", fetch.fetch_constant,
                               fetch.address_bytes, sampled_size, hash);
     const uint32_t attribute_summary_count =
         fetch.attribute_summary_count <
@@ -1695,14 +1747,15 @@ class Sidecar final : public EventSink {
     MaybeFlushSampleMetadata();
   }
 
-  void WriteIndexSampleMetadata(const DrawEvent& event, uint32_t full_size,
+  void WriteIndexSampleMetadata(const DrawEvent& event, NativeReplaySupport replay_support,
+                                uint32_t full_size,
                                 uint32_t sampled_size, uint64_t hash,
                                 const std::filesystem::path& sample_path) {
     if (!EnsureSampleMetadataOpen()) {
       return;
     }
 
-    WriteSampleMetadataPrefix(event, sample_path, "index", 0, event.index_guest_base,
+    WriteSampleMetadataPrefix(event, sample_path, replay_support, "index", 0, event.index_guest_base,
                               sampled_size, hash);
     std::fprintf(sample_metadata_file_,
                  ",\"index\":{\"base_address\":\"0x%08X\",\"full_size\":%u,"
@@ -1712,7 +1765,7 @@ class Sidecar final : public EventSink {
     MaybeFlushSampleMetadata();
   }
 
-  void WriteTextureSampleMetadata(const DrawEvent& event,
+  void WriteTextureSampleMetadata(const DrawEvent& event, NativeReplaySupport replay_support,
                                   const TextureFetchSummary& fetch,
                                   const TextureDumpPlan& dump_plan,
                                   uint32_t sampled_size, uint64_t hash,
@@ -1725,7 +1778,7 @@ class Sidecar final : public EventSink {
         dump_plan.requested_full && sampled_size == dump_plan.expected_full_size;
     const char* pc_format_json = dump_plan.known_pc_format ? "\"BC3_UNORM\"" : "null";
 
-    WriteSampleMetadataPrefix(event, sample_path, "texture", fetch.fetch_constant,
+    WriteSampleMetadataPrefix(event, sample_path, replay_support, "texture", fetch.fetch_constant,
                               fetch.base_address_bytes, sampled_size, hash);
     std::fprintf(sample_metadata_file_,
                  ",\"dump_full\":%s,\"expected_full_size\":%u"

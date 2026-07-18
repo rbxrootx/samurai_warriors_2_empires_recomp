@@ -101,10 +101,12 @@
 - Optional sample dumping is available behind `sw2e_native_renderer_dump_samples=false` by default.
   `sw2e_native_renderer_sample_root` controls the output folder and
   `sw2e_native_renderer_dump_sample_limit` bounds files per run. It now writes a `samples.jsonl`
-  manifest beside the binary samples with draw, shader, fetch, texture, and vertex-layout metadata.
-  `sw2e_native_renderer_dump_priority_samples_only=false` can be enabled to keep the sample budget for
-  indexed, `triangle_strip`, stride-8+ model-layout, or multi-texture draws instead of title/menu
-  quads.
+  manifest beside the binary samples with draw, shader, fetch, texture, vertex-layout metadata, and
+  the native replay support bucket for the sampled draw. `sw2e_native_renderer_dump_priority_samples_only=false`
+  can be enabled to keep the sample budget for indexed, `triangle_strip`, stride-8+ model-layout, or
+  multi-texture draws instead of title/menu quads. `sw2e_native_renderer_dump_gap_samples_only=true`
+  narrows dumps further to unsupported native layout/transform gaps, which is the preferred mode for
+  gameplay renderer work.
   Validation:
   `runtime.native-sidecar-texture-dump-smoke-20260717-170143.log` exited cleanly and wrote 128
   bounded samples to
@@ -356,6 +358,15 @@
   first texture format `20`. Treat this as an effects/billboard-style candidate until correlated
   with asset loads or screen captures; the stride-9 transform family remains the main native 3D
   geometry target.
+- `run_recomp_native_gap_sample_probe.bat` now captures bounded samples only from unsupported native
+  layout/transform draws. Validation `runtime.native-transform-probe-20260718-001120.log` exited
+  with code `0`, kept JSON events off, wrote `128` manifest rows under
+  `extracted\native_render_samples\native_gap_probe_20260718-001120`, and split them into `53` index,
+  `46` texture, and `29` vertex samples. The support split was `123` unsupported-transform rows and
+  `5` unsupported-layout rows. `tools\export_native_gap_obj.py` converts paired vertex/index rows
+  into OBJ previews; the validation pass exported ten transform-gap OBJs and two layout-gap OBJs,
+  including indexed gameplay draws with stride-9, stride-10, stride-11, and stride-12 vertex
+  layouts. This is the first runtime-draw-to-Blender bridge for native gameplay renderer research.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

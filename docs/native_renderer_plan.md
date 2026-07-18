@@ -84,6 +84,7 @@ Relevant cvars:
 | `sw2e_native_renderer_memory_hash_bytes` | `4096` | Maximum sample bytes hashed from each vertex/texture fetch. |
 | `sw2e_native_renderer_dump_samples` | `false` | Dumps unique guest-memory samples touched by draw fetches. |
 | `sw2e_native_renderer_dump_priority_samples_only` | `false` | When dumping samples, skip ordinary title/menu draws and keep the budget for indexed, strip, stride-8+ model-layout, or multi-texture draws. |
+| `sw2e_native_renderer_dump_gap_samples_only` | `false` | When dumping samples, keep only unsupported native layout/transform gap draws. |
 | `sw2e_native_renderer_sample_root` | `extracted/native_render_samples` | Output folder for dumped samples. |
 | `sw2e_native_renderer_dump_sample_limit` | `256` | Maximum unique samples to dump per run. |
 | `sw2e_native_renderer_dump_full_textures` | `false` | Dumps complete footprints for supported texture formats instead of only short hash samples. |
@@ -684,6 +685,41 @@ the main stage mesh layout. The priority order is now: decode the stride-9 trans
 model-space geometry, then classify whether the stride-1 layout family is effects, billboards, or
 another non-mesh pass.
 
+For bounded gap bytes plus an offline mesh preview bridge, use:
+
+```powershell
+.\run_recomp_native_gap_sample_probe.bat
+```
+
+This is the same muted no-JSON gameplay probe, but it enables
+`sw2e_native_renderer_dump_gap_samples_only=true`, hashes/dumps only unsupported native layout or
+transform draws, and writes a timestamped `samples.jsonl` under
+`extracted\native_render_samples\native_gap_probe_*`. Validation
+`runtime.native-transform-probe-20260718-001120.log` exited with code `0`, touched no JSON event
+file, wrote `128` bounded sample rows, and split them as `index=53`, `texture=46`, `vertex=29`.
+The captured native gap support buckets were `unsupported_transform=123` and `unsupported_layout=5`.
+
+`tools\export_native_gap_obj.py` converts the paired vertex/index rows from that manifest into
+simple model-space OBJ previews:
+
+```powershell
+python .\tools\export_native_gap_obj.py `
+  .\extracted\native_render_samples\native_gap_probe_20260718-001120 `
+  --max-draws 10
+
+python .\tools\export_native_gap_obj.py `
+  .\extracted\native_render_samples\native_gap_probe_20260718-001120 `
+  --support unsupported_layout --max-draws 4
+```
+
+That check exported ten transform-gap OBJ previews and two layout-gap OBJ previews. Useful first
+targets include indexed stride-9 draw `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4` with 388
+vertices and 239 faces, indexed stride-12 draw `VS=0xED8D12865D27DEBF` with 1365 vertices and 805
+faces, and a stride-10 transform draw `VS=0x1A2E173CABDD3E80 / PS=0xA444707D877567A5` with 854
+vertices and 1537 faces. These OBJ files are diagnostic geometry previews, not finished native
+render output, but they prove the no-JSON runtime probe can hand real gameplay vertex/index data to
+Blender-facing tooling.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -700,7 +736,8 @@ work should proceed in this order:
 3. Capture and classify one gameplay/battle scene with the new `native_replay_support` summary,
    including indexed vertex/index-buffer families. Compatible triangle strips can now be replayed;
    the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts and shader
-   transforms rather than primitive expansion alone.
+   transforms rather than primitive expansion alone. Use gap-only samples and OBJ previews to keep
+   that work bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 path: tiled textures,
    additional Xenos formats, mip tails, arrays, and render-target textures.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare

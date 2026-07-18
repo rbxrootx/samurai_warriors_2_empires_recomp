@@ -548,6 +548,29 @@ The generated `export_manifest.csv` files live beside the OBJ outputs:
 | `extracted\g1m_obj_exports\weapon_prop_2410` | Entry `2410` split into 23 `G1M_` weapon/prop models, all exported. |
 | `extracted\g1m_obj_exports\material_slot_smoke` | Single stage model smoke after adding `.mtl` material-slot export. |
 
+### Runtime Gap OBJ Previews
+
+`tools\export_native_gap_obj.py` is a separate diagnostic bridge for live runtime draw samples. It
+does not parse archive `G1M_` files; instead, it reads a native-renderer `samples.jsonl` capture from
+`run_recomp_native_gap_sample_probe.bat`, pairs sampled vertex/index buffers by frame and draw, and
+writes simple OBJ previews for unsupported native layout/transform draws.
+
+Example:
+
+```powershell
+.\run_recomp_native_gap_sample_probe.bat
+
+python .\tools\export_native_gap_obj.py `
+  .\extracted\native_render_samples\native_gap_probe_20260718-001120 `
+  --max-draws 10
+```
+
+Validation on `native_gap_probe_20260718-001120` exported ten transform-gap OBJ previews and two
+layout-gap OBJ previews from real gameplay draw data while keeping the large native event JSON stream
+disabled. This gives the future Blender/map-editor path two complementary sources: archive-side
+`G1M_` exports for editable assets, and runtime-side gap OBJs for correlating what the game actually
+draws in battle.
+
 ### OBJ Geometry Reimport
 
 `tools\patch_g1m_from_obj.py` is the first conservative geometry edit path. It takes an original

@@ -98,6 +98,8 @@ Useful launchers:
   priority samples for indexed, strip, model-layout, and multi-texture gameplay draws.
 - `run_recomp_native_transform_probe.bat` runs a muted, timed gameplay probe with JSON events off and
   reports concise `SW2E native transform gap` lines for the next native-renderer work.
+- `run_recomp_native_gap_sample_probe.bat` captures a bounded gap-only `samples.jsonl` plus vertex,
+  index, and texture bytes for unsupported native gameplay draws.
 
 ## Modding Direction
 
@@ -118,6 +120,8 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Observe live ReXGlue draw/swap events without editing generated recomp code.
 - Classify visible/no-output/depth/indexed/layout/texture buckets.
 - Capture bounded guest vertex, index, and texture memory samples.
+- Convert bounded native gap samples into simple OBJ previews with
+  `tools/export_native_gap_obj.py`.
 - Decode linear BC3/DXT5 menu textures.
 - Replay supported title/menu textured and solid draw families through D3D11.
 - Keep the compatibility renderer as the reference path while native coverage grows.
@@ -125,7 +129,7 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Map stride-8/9/10 vertex layouts and indexed triangle strips.
+- Map stride-8/9/10 vertex layouts, indexed triangle strips, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.
