@@ -555,6 +555,14 @@
   decode thousands of backing-buffer vertices. `tools\export_native_gap_obj.py` now clamps
   non-indexed previews to the submitted draw count, so D5 runtime previews export as true four-vertex
   strips with two faces.
+- `VS=0xDE7F9AF93C668314 / PS=0x8CBAD34FCE165328` is now supported as a constant-selector
+  screen-space quad family. The vertex shader reads a stride-1 float selector stream and selects
+  `c7..c10` positions, `c11..c14` colors, and `c15..c18` UVs. Validation
+  `runtime.native-standard-replay-20260718-031228.log` kept event JSON off, wrote the nonblank
+  `extracted\native_render_samples\native_standard_replay_20260718-031228.bmp`, and raised the
+  same gameplay replay summary to `native_supported=740`, `native_tex=728`, `native_solid=12`, with
+  the old layout bucket reduced from `729` to `1`. The output shows UI/roster text through the
+  normal replay path; exact pixel shader constant modulation is still a follow-up.
 
 ## Save And Storage Path
 

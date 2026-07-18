@@ -1526,6 +1526,26 @@ const VertexFetchSummary* FindDecodableNativeReplayTexturedVertexFetch(const Dra
   return nullptr;
 }
 
+const VertexFetchSummary* FindNativeReplayConstantSelectorVertexFetch(const DrawEvent& event) {
+  if (event.vertex_shader_hash != 0xDE7F9AF93C668314ull ||
+      event.pixel_shader_hash != 0x8CBAD34FCE165328ull || event.indexed ||
+      event.vertex_fetch_summary_count == 0 || event.index_count < 3) {
+    return nullptr;
+  }
+  for (uint32_t i = 0; i < event.vertex_fetch_summary_count; ++i) {
+    const auto& candidate = event.vertex_fetches[i];
+    if (candidate.stride_words == 1 && candidate.attribute_count == 1 &&
+        candidate.size_bytes >= event.index_count * sizeof(float)) {
+      return &candidate;
+    }
+  }
+  return nullptr;
+}
+
+bool CanReplayNativeConstantScreenQuadDraw(const DrawEvent& event) {
+  return FindNativeReplayConstantSelectorVertexFetch(event) != nullptr;
+}
+
 bool IsNativeReplayTexturedTriangleShape(const DrawEvent& event) {
   if (event.index_count < 3 || event.vertex_fetch_summary_count == 0 ||
       event.texture_fetch_summary_count == 0) {
@@ -1640,6 +1660,13 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
     return NativeReplaySupport::kDepthOnly;
   }
   if (IsNativeReplayTexturedTriangleShape(event)) {
+    if (CanReplayNativeConstantScreenQuadDraw(event)) {
+      std::optional<TextureDumpPlan> texture_plan;
+      if (!FindNativeReplayTextureFetch(event, texture_plan)) {
+        return NativeReplaySupport::kUnsupportedTexture;
+      }
+      return NativeReplaySupport::kSupportedTextured;
+    }
     if (!FindNativeReplayTexturedVertexFetch(event)) {
       if (FindDecodableNativeReplayTexturedVertexFetch(event)) {
         return NativeReplaySupport::kUnsupportedTransform;
@@ -1889,6 +1916,9 @@ class Sidecar final : public EventSink {
       captured = CaptureNativeGpuReplayProjectedTransformGapDraw(event, context);
     } else {
       captured = CaptureNativeGpuReplayTexturedDraw(event, context);
+      if (!captured) {
+        captured = CaptureNativeGpuReplayConstantScreenQuadDraw(event, context);
+      }
       if (!captured && REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry)) {
         captured = CaptureNativeGpuReplaySolidDraw(event, context);
       }
@@ -2037,6 +2067,116 @@ class Sidecar final : public EventSink {
         event.primitive_type == kXenosPrimitiveTriangleStrip
             ? (event.indexed ? "indexed textured strip" : "textured strip")
             : (event.indexed ? "indexed textured" : "textured"));
+    return true;
+  }
+
+  bool CaptureNativeGpuReplayConstantScreenQuadDraw(const DrawEvent& event,
+                                                    const DrawEventContext& context) {
+    if (!HasNativeReplayColorOutput(event) || !IsNativeReplayTexturedTriangleShape(event)) {
+      return false;
+    }
+
+    const VertexFetchSummary* vertex_fetch =
+        FindNativeReplayConstantSelectorVertexFetch(event);
+    if (!vertex_fetch) {
+      return false;
+    }
+
+    std::optional<TextureDumpPlan> texture_plan;
+    const TextureFetchSummary* texture_fetch = FindNativeReplayTextureFetch(event, texture_plan);
+    if (!texture_fetch || !texture_plan) {
+      return false;
+    }
+
+    const uint64_t key = (uint64_t(event.frame_index) << 32) | event.draw_index;
+    if (!native_gpu_replay_draw_keys_.insert(key).second) {
+      return false;
+    }
+
+    std::vector<uint32_t> indices;
+    if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
+      if (!BuildNativeReplayTriangleStripIndices(event, indices)) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return false;
+      }
+    } else if (event.primitive_type == kXenosPrimitiveTriangleList) {
+      indices.reserve(event.index_count);
+      for (uint32_t i = 0; i < event.index_count; ++i) {
+        indices.push_back(i);
+      }
+    } else {
+      native_gpu_replay_draw_keys_.erase(key);
+      return false;
+    }
+
+    std::vector<uint8_t> vertex_bytes;
+    const uint32_t vertex_bytes_needed = event.index_count * sizeof(float);
+    if (!CopyPhysicalMemorySample(context.memory, vertex_fetch->address_bytes,
+                                  vertex_bytes_needed, vertex_bytes)) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return false;
+    }
+
+    std::shared_ptr<const std::vector<uint8_t>> texture_bytes_ref =
+        CaptureNativeGpuReplayTextureBytes(*texture_fetch, *texture_plan, context.memory);
+    if (!texture_bytes_ref) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return false;
+    }
+
+    gpu_replay::ReplayDraw replay_draw;
+    replay_draw.kind = gpu_replay::ReplayDrawKind::kTexturedTriangles;
+    replay_draw.frame = event.frame_index;
+    replay_draw.draw = event.draw_index;
+    replay_draw.vertex_shader_hash = event.vertex_shader_hash;
+    replay_draw.pixel_shader_hash = event.pixel_shader_hash;
+    replay_draw.vertex_stride_words = vertex_fetch->stride_words;
+    replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
+    replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
+    replay_draw.indices = std::move(indices);
+    replay_draw.vertices.reserve(event.index_count);
+
+    for (uint32_t i = 0; i < event.index_count; ++i) {
+      const float selector_value =
+          ReadF32(vertex_bytes.data() + size_t(i) * sizeof(float), vertex_fetch->endian);
+      if (!std::isfinite(selector_value) || selector_value < 0.0f || selector_value >= 4.0f) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return false;
+      }
+      const uint32_t selector = static_cast<uint32_t>(std::floor(selector_value));
+      const auto* position_constant = FindNativeReplayFloatConstant(event, 7 + selector);
+      const auto* color_constant = FindNativeReplayFloatConstant(event, 11 + selector);
+      const auto* texcoord_constant = FindNativeReplayFloatConstant(event, 15 + selector);
+      if (!position_constant || !color_constant || !texcoord_constant) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return false;
+      }
+
+      gpu_replay::ReplayVertex replay_vertex;
+      replay_vertex.x = position_constant->values[0];
+      replay_vertex.y = position_constant->values[1];
+      replay_vertex.z = 0.0f;
+      replay_vertex.w = 1.0f;
+      replay_vertex.u = texcoord_constant->values[0];
+      replay_vertex.v = texcoord_constant->values[1];
+      replay_vertex.r = color_constant->values[0];
+      replay_vertex.g = color_constant->values[1];
+      replay_vertex.b = color_constant->values[2];
+      replay_vertex.a = color_constant->values[3];
+      replay_draw.vertices.push_back(replay_vertex);
+    }
+
+    replay_draw.texture.source_base_address = texture_fetch->base_address_bytes;
+    replay_draw.texture.format = texture_fetch->format;
+    replay_draw.texture.tiled = texture_fetch->tiled;
+    replay_draw.texture.width = texture_fetch->width;
+    replay_draw.texture.height = texture_fetch->height;
+    replay_draw.texture.width_blocks = texture_plan->width_blocks;
+    replay_draw.texture.height_blocks = texture_plan->height_blocks;
+    replay_draw.texture.row_pitch_bytes = texture_plan->row_pitch_bytes;
+    replay_draw.texture.endian = texture_fetch->endian;
+    replay_draw.texture.bytes_ref = std::move(texture_bytes_ref);
+    QueueNativeGpuReplayDraw(std::move(replay_draw), "constant screen quad");
     return true;
   }
 

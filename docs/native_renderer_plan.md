@@ -691,10 +691,12 @@ a0=fmt36@w0->t1i0m1u1s2336
 tfetches=1 tex0_format=20 tex0_dim=1 tex0_tiled=0
 ```
 
-That looks like a point/strip-driven textured effect or particle-style gameplay family rather than
-the main stage mesh layout. The priority order is now: decode the stride-9 transform family for
-model-space geometry, then classify whether the stride-1 layout family is effects, billboards, or
-another non-mesh pass.
+That is now classified as a constant-selector screen-space quad family rather than a model-space
+mesh. Dumped shader ucode shows the single float vertex stream selects one of four constant rows:
+`c7..c10` provide screen positions, `c11..c14` provide color, and `c15..c18` provide UVs. The pixel
+shader samples `tf0` and modulates against captured constants; the current native replay captures
+the geometry, texture, and vertex color path, while exact pixel constant modulation remains a
+follow-up accuracy task.
 
 For bounded gap bytes plus an offline mesh preview bridge, use:
 
@@ -959,6 +961,26 @@ and that each captured non-indexed D5 draw submits only `index_count=4` vertices
 now clamps non-indexed previews to that submitted count instead of treating the whole sampled vertex
 buffer as one mesh, so D5 gap previews export as four vertices and two faces instead of thousands of
 unsubmitted backing-buffer vertices.
+
+Standard native replay now supports the DE7 constant-selector quad family:
+
+```text
+VS=0xDE7F9AF93C668314 PS=0x8CBAD34FCE165328
+selector stream: stride_words=1, fmt36, one float per vertex
+positions: c7..c10
+colors:    c11..c14
+uvs:       c15..c18
+```
+
+Validation `runtime.native-standard-replay-20260718-031228.log` ran a normal no-JSON replay and
+wrote `extracted\native_render_samples\native_standard_replay_20260718-031228.bmp`. The frame
+summary moved from the earlier `native_supported=12 native_tex=0 native_solid=12` and
+`unsupported_output(... layout ...)=729` shape to `native_supported=740 native_tex=728
+native_solid=12` with only one remaining layout gap in the same gameplay scene. Retained draw lines
+show repeated DE7 captures such as `vertices=4`, `indices=6`, `stride_words=1`, and `texture=32x32`.
+The BMP is a valid nonblank `1280x720` replay with visible UI/roster text, proving this family is no
+longer a layout wall. Treat the pixel shader as approximate until its `tf0`/constant modulation path
+is mirrored in the replacement shader.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
