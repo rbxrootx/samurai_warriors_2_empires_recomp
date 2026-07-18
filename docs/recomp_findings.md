@@ -549,6 +549,12 @@
   terrain/ground strip after diagnostic fit; the first sampled D5 quads are outside clip before
   normalization, so the next work is pass classification and strict render-target/depth/material
   integration rather than treating D5 as a full scene mesh.
+- Bounded gap sample `runtime.native-transform-probe-20260718-030541.log` confirmed the D5 rows now
+  include constants through `c10` while keeping event JSON off. It also exposed an OBJ bridge issue:
+  non-indexed D5 draws submit `index_count=4` even though the sampled vertex-buffer byte range can
+  decode thousands of backing-buffer vertices. `tools\export_native_gap_obj.py` now clamps
+  non-indexed previews to the submitted draw count, so D5 runtime previews export as true four-vertex
+  strips with two faces.
 
 ## Save And Storage Path
 

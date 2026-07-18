@@ -953,6 +953,13 @@ show repeated four-vertex strips with `constants=c7,c8,c9,c10`, `source=shader-d
 The first observed D5 quads are outside clip before normalization (`inside=0.000`), so this is a
 draw-family/projection unlock and pass-classification aid rather than final native scene rendering.
 
+Follow-up bounded sample `runtime.native-transform-probe-20260718-030541.log` wrote `96` gap rows
+with vertex/pixel constants and no event JSON. It confirmed the D5 vertex row includes `c7..c10`
+and that each captured non-indexed D5 draw submits only `index_count=4` vertices. The OBJ exporter
+now clamps non-indexed previews to that submitted count instead of treating the whole sampled vertex
+buffer as one mesh, so D5 gap previews export as four vertices and two faces instead of thousands of
+unsubmitted backing-buffer vertices.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the

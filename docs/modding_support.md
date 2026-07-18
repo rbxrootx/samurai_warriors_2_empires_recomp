@@ -572,6 +572,11 @@ constant snapshots to every manifest row, and `tools\export_native_gap_obj.py` n
 `gap_obj_manifest.csv` with raw bounds, constant indices, and heuristic projection candidates beside
 the OBJ files. Those projection fields are renderer research leads, not final camera math.
 
+Non-indexed draw previews are clamped to the draw's submitted `index_count`, not the full sampled
+vertex-buffer byte range. This matters for repeated strip families such as
+`VS=0xD5CCD0C915DDCC0B`, where one draw submits a four-vertex strip even though the sampled backing
+buffer is much larger.
+
 This gives the future Blender/map-editor path two complementary sources: archive-side `G1M_` exports
 for editable assets, and runtime-side gap OBJs for correlating what the game actually draws in
 battle.

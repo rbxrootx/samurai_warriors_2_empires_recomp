@@ -142,6 +142,10 @@ def decode_vertices(vertex_row: dict[str, Any], sample_root: Path) -> tuple[list
         return [], []
 
     vertex_count = len(data) // stride_bytes
+    if not bool(vertex_row.get("indexed")):
+        submitted_vertex_count = int(vertex_row.get("index_count", 0))
+        if submitted_vertex_count > 0:
+            vertex_count = min(vertex_count, submitted_vertex_count)
     positions: list[tuple[float, float, float]] = []
     uvs: list[tuple[float, float]] = []
     for vertex_index in range(vertex_count):
