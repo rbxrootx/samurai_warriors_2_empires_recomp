@@ -792,6 +792,27 @@ bool BuildNativeReplaySwizzledProjectionRows(
   return true;
 }
 
+bool BuildNativeReplayDirectProjectionRows(
+    const DrawEvent& event, const std::array<uint32_t, 4>& constant_indices,
+    bool negate_y_row, std::array<std::array<float, 4>, 4>& rows) {
+  rows = {};
+  for (uint32_t row = 0; row < 4; ++row) {
+    const auto* constant = FindNativeReplayFloatConstant(event, constant_indices[row]);
+    if (!constant) {
+      return false;
+    }
+    const float sign = negate_y_row && row == 1 ? -1.0f : 1.0f;
+    rows[row] = {sign * constant->values[0], sign * constant->values[1],
+                 sign * constant->values[2], sign * constant->values[3]};
+    for (float value : rows[row]) {
+      if (!std::isfinite(value)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 bool BuildNativeReplayBone0UpstreamRows(const DrawEvent& event,
                                         std::array<uint32_t, 3>& constant_indices,
                                         std::array<std::array<float, 4>, 3>& rows) {
@@ -842,6 +863,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
     bool include_bone0_upstream, bool include_shared_shader_skin) {
   std::array<uint32_t, 4> constants = {};
   bool negate_y_row = false;
+  bool direct_projection_rows = false;
   bool supports_bone0_upstream = false;
   bool supports_shared_shader_skin = false;
   const char* source = nullptr;
@@ -860,6 +882,11 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       constants = {3, 4, 5, 6};
       source = "shader-final-c3-c6";
       break;
+    case 0xD5CCD0C915DDCC0Bull:
+      constants = {7, 8, 9, 10};
+      direct_projection_rows = true;
+      source = "shader-direct-c7-c10";
+      break;
     default:
       return {};
   }
@@ -867,7 +894,11 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   include_shared_shader_skin = include_shared_shader_skin && supports_shared_shader_skin;
 
   std::array<std::array<float, 4>, 4> rows = {};
-  if (!BuildNativeReplaySwizzledProjectionRows(event, constants, negate_y_row, rows)) {
+  const bool built_rows =
+      direct_projection_rows
+          ? BuildNativeReplayDirectProjectionRows(event, constants, negate_y_row, rows)
+          : BuildNativeReplaySwizzledProjectionRows(event, constants, negate_y_row, rows);
+  if (!built_rows) {
     return {};
   }
   ProjectionCandidate candidate;

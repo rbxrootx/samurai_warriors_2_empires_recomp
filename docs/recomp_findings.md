@@ -538,6 +538,17 @@
   ImageMagick identified the BMP as nonblank `1280x720` TrueColorAlpha output. This replaces the
   previous `texture_fetch` blocker for the render-target feedback texture family with ordinary
   draw-family/projection work.
+- `VS=0xD5CCD0C915DDCC0B / PS=0x7B81C162CBA6D195` is now mapped as a direct projected strip
+  family. Its dumped ucode fetches stride-9 position/normal/packed/UV data and writes `oPos` from
+  direct `c7,c8,c9,c10` rows; it is not the shared ED8D/45C4 skinned path. Validation
+  `runtime.native-transform-probe-20260718-030209.log` filtered to this vertex shader, exited with
+  code `0`, kept event JSON off, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-030209.bmp`. Candidate logs
+  show `source=shader-direct-c7-c10`, repeated four-vertex strips, finite projection metrics, and
+  retained D3D11 draws with linear BC3 `512x512` textures. The output is a long textured
+  terrain/ground strip after diagnostic fit; the first sampled D5 quads are outside clip before
+  normalization, so the next work is pass classification and strict render-target/depth/material
+  integration rather than treating D5 as a full scene mesh.
 
 ## Save And Storage Path
 

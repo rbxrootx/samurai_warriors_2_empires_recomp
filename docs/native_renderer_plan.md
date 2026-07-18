@@ -925,6 +925,34 @@ texture or SRV creation failures appeared. ImageMagick identified the BMP as `12
 TrueColorAlpha with nonzero mean/standard deviation. This proves the
 first tiled render-target texture fetch can enter native replay without the large JSON dump path.
 
+The D5 stride-9 transform family now has its own shader-final candidate. Dumped ucode for
+`VS=0xD5CCD0C915DDCC0B / PS=0x7B81C162CBA6D195` shows a direct `oPos` path from position fetch
+`r7.xyz1` through `c7,c8,c9,c10`, unlike the shared ED8D/45C4 skinned `c[4+a0]..c[6+a0]` path.
+The native replay code now builds direct rows from those constants under
+`source=shader-direct-c7-c10`.
+
+Validation `runtime.native-transform-probe-20260718-030209.log` ran:
+
+```powershell
+.\run_recomp_native_transform_probe.ps1 `
+  -ProjectedGapReplay `
+  -ProjectedGapMode shader-final-fit `
+  -ProjectedVertexShader 0xD5CCD0C915DDCC0B `
+  -ProjectedGapMinVertices 3 `
+  -ProjectedGapMinIndices 0 `
+  -ReplayDrawLimit 12 `
+  -DurationSeconds 30 `
+  -InitialDelaySeconds 5
+```
+
+It exited with code `0`, kept `native_render_events=false`, touched no event JSON, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-030209.bmp`. Candidate logs
+show repeated four-vertex strips with `constants=c7,c8,c9,c10`, `source=shader-direct-c7-c10`,
+`finite=1.000`, and retained D3D11 draws using linear BC3 `512x512` textures. The BMP is nonblank
+`1280x720` TrueColorAlpha output and visually resolves as a long textured terrain/ground strip.
+The first observed D5 quads are outside clip before normalization (`inside=0.000`), so this is a
+draw-family/projection unlock and pass-classification aid rather than final native scene rendering.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -939,10 +967,10 @@ work should proceed in this order:
    title/menu pass once those families match the compatibility output.
 2. Handle the remaining depth/non-color title/menu output path under native render-target ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips can now be replayed; the remaining big gameplay gap is decoding
-   the stride-8/9/10 model vertex layouts, shader constants, and shader transforms rather than
-   primitive expansion alone. Use gap-only samples, OBJ previews, and ucode dumps to keep that work
-   bounded and visually inspectable.
+   dumps. Compatible triangle strips and the D5 repeated terrain/ground strips can now be replayed;
+   the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts, shader
+   constants, and shader transforms rather than primitive expansion alone. Use gap-only samples,
+   OBJ previews, and ucode dumps to keep that work bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
    paths: additional Xenos formats, mip tails, arrays, swizzles, and render-target ownership.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare

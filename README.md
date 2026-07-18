@@ -37,10 +37,10 @@ References:
 - Native-renderer sidecar work can observe draw/swap events, hash or dump bounded guest memory,
   classify render-state buckets, and replay supported title/menu draw families through a native
   D3D11 path.
-- The opt-in projected-gap replay can now submit selected gameplay transform-gap meshes through
+- The opt-in projected-gap replay can now submit selected gameplay transform-gap families through
   D3D11 debug-fit output, including the first confirmed tiled `k_8_8_8_8` render-target texture
-  fetch family. This is visibility scaffolding for native gameplay rendering, not the final
-  camera/shader path.
+  fetch family and the repeated D5 stride-9 terrain/ground strip shader family. This is visibility
+  scaffolding for native gameplay rendering, not the final camera/shader path.
 
 Full native gameplay rendering is not complete yet. The next big graphics milestone is correlating
 indexed `triangle_strip` battle draws and stride-8/9/10 vertex layouts with decoded G1M meshes,
@@ -162,6 +162,8 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Replay selected gameplay transform-gap meshes through an experimental D3D11 debug-fit path.
 - Dump compact ReXGlue shader ucode files by hash during short no-JSON probes.
 - Capture wider shader constant windows from a source ReXGlue SDK checkout for transform work.
+- Replay the `D5CCD0C915DDCC0B` stride-9 projected strip family through the shader-observed direct
+  `c7..c10` `oPos` block for terrain/ground-strip diagnostics.
 - Keep the compatibility renderer as the reference path while native coverage grows.
 
 Near-term work:
