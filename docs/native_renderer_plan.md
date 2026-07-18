@@ -1059,6 +1059,34 @@ next visible-scene blockers are the indexed stride-11 `VS=0x1C9E2812AEBDBE4E` /
 `PS=0x7703E4142DFBD4D4` transform family, the single indexed layout gap, the five shape gaps, and
 native ownership of render-target composition.
 
+The indexed stride-11 `VS=0x1C9E2812AEBDBE4E` / `PS=0x7703E4142DFBD4D4` family is now also promoted
+as `supported_projected_transform`. The dumped shader path matches the shared skinning skeleton:
+position words `0..2`, a single blend scalar at word `3`, packed palette indices at word `4`, and
+UV words `9..10`. Native replay decodes `weight0 = 1 - blend`, `weight1 = blend`, applies the
+indexed `c[4+a0]..c[6+a0]` palette block, then applies the final `c0..c3` projection block. The
+default `shader-final-or-heuristic` projection strategy now automatically routes known shared-skin
+projection hashes through this shader-skinned path instead of leaving them on the older matrix
+scorer.
+
+Focused validation `runtime.native-transform-probe-20260718-044013.log` exited `0`, kept event JSON
+off, reported no assertions and no native replay failures, retained the 1C9E indexed strip family
+with `842` vertices and `2088` expanded indices, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-044013.bmp`. The BMP is
+nonblank and recognizable as projected gameplay mesh chunks, but it is still diagnostic output, not
+a solved full scene. Standard no-JSON validation
+`runtime.native-1c9e-projected-standard-20260718-044240.log` exited `0` and reached repeated
+gameplay frames with `native_supported=1220`, `native_tex=728`, `native_solid=12`,
+`native_depth=10`, `native_projected=470`, and
+`unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/207`. The replay wrote
+`extracted\native_render_samples\native_1c9e_projected_standard_20260718-044240.bmp` using `1388`
+captured D3D11 draws; a sampled `1280x720` grid found `3072/3072` nonblack points with mean RGB
+`120.88`.
+
+The next repeated projected-transform blocker in the standard gameplay pass is now
+`VS=0x1B2E9C6960B0C86E` / `PS=0xD10452A3E31F9C61`, an indexed stride-11 attrs-6 family. The single
+indexed layout gap, five shape gaps, and native render-target composition still block full native
+scene ownership.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -1075,8 +1103,8 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips and the D5 repeated terrain/ground strips can now be replayed;
-   the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts, shader
+   dumps. Compatible triangle strips plus the D5 and 1C9E projected transform families can now be
+   replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex layouts, shader
    constants, and shader transforms rather than primitive expansion alone. Use gap-only samples,
    OBJ previews, and ucode dumps to keep that work bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`

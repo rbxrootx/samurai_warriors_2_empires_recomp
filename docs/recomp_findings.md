@@ -625,6 +625,19 @@
   `120.88`. It is still a projected terrain/strip diagnostic rather than correct full-scene output;
   the next blockers are indexed stride-11 transform draws, one indexed layout gap, five shape gaps,
   and native render-target composition.
+- The indexed stride-11 `VS=0x1C9E2812AEBDBE4E / PS=0x7703E4142DFBD4D4` shared-skin projection
+  family is now promoted as `supported_projected_transform` too. Native replay decodes position
+  words `0..2`, a blend scalar at word `3`, packed palette indices at word `4`, and UV words
+  `9..10`, then applies `c[4+a0]..c[6+a0]` before the final `c0..c3` projection. Focused validation
+  `runtime.native-transform-probe-20260718-044013.log` exited `0`, retained the family with `842`
+  vertices and `2088` expanded indices, and wrote nonblank
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-044013.bmp`. Standard
+  validation `runtime.native-1c9e-projected-standard-20260718-044240.log` exited `0`, reported zero
+  assertions and zero native replay failures, reached repeated gameplay frames with
+  `native_supported=1220`, `native_projected=470`, and unsupported buckets reduced to `0/5/1/0/207`,
+  then wrote `extracted\native_render_samples\native_1c9e_projected_standard_20260718-044240.bmp`
+  using `1388` captured D3D11 draws. The next repeated projected blocker is
+  `VS=0x1B2E9C6960B0C86E / PS=0xD10452A3E31F9C61`.
 
 ## Save And Storage Path
 

@@ -39,7 +39,8 @@ References:
   D3D11 path.
 - The opt-in projected-gap replay can now submit selected gameplay transform-gap families through
   D3D11 debug-fit output, including the first confirmed tiled `k_8_8_8_8` render-target texture
-  fetch family and the repeated D5 stride-9 terrain/ground strip shader family.
+  fetch family, the repeated D5 stride-9 terrain/ground strip shader family, and the first
+  promoted 1C9E indexed stride-11 shared-skin projection family.
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
@@ -166,9 +167,10 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Replay selected gameplay transform-gap meshes through an experimental D3D11 debug-fit path.
 - Dump compact ReXGlue shader ucode files by hash during short no-JSON probes.
 - Capture wider shader constant windows from a source ReXGlue SDK checkout for transform work.
-- Replay the `D5CCD0C915DDCC0B` stride-9 projected strip family through the shader-observed direct
-  `c7..c10` `oPos` block as a standard `supported_projected_transform` replay family for
-  terrain/ground-strip diagnostics.
+- Replay promoted projected-transform gameplay families as standard
+  `supported_projected_transform` draws, including the `D5CCD0C915DDCC0B` stride-9 direct
+  `c7..c10` terrain/ground-strip path and the `1C9E2812AEBDBE4E` indexed stride-11 shared-skin
+  `c[4+a0]..c[6+a0]` plus `c0..c3` projection path.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding

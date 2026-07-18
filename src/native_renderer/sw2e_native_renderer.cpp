@@ -401,6 +401,12 @@ float ReadF32(const uint8_t* data, uint32_t endian) {
   return value;
 }
 
+bool IsNativeReplaySharedShaderSkinProjectionShader(uint64_t vertex_shader_hash) {
+  return vertex_shader_hash == 0xED8D12865D27DEBFull ||
+         vertex_shader_hash == 0x45C4DDDAAA10F75Full ||
+         vertex_shader_hash == 0x1C9E2812AEBDBE4Eull;
+}
+
 uint32_t NativeReplayFloatFormatComponentCount(uint32_t data_format) {
   switch (data_format) {
     case kXenosVertexFormat32Float:
@@ -571,6 +577,29 @@ void DecodeNativeReplaySharedShaderSkinInputs(const uint8_t* vertex,
   replay_vertex.shared_shader_constant_offsets = {};
 
   if (vertex_shader_hash == 0x45C4DDDAAA10F75Full) {
+    replay_vertex.has_shared_shader_skin = true;
+    return;
+  }
+
+  if (vertex_shader_hash == 0x1C9E2812AEBDBE4Eull) {
+    if (vertex_stride_bytes < 20) {
+      return;
+    }
+
+    const float blend = std::clamp(ReadF32(vertex + 12, endian), 0.0f, 1.0f);
+    if (!std::isfinite(blend)) {
+      return;
+    }
+
+    const uint32_t packed_indices = ReadU32WithEndian(vertex + 16, endian);
+    replay_vertex.shared_shader_weight0 = 1.0f - blend;
+    replay_vertex.shared_shader_weight1 = blend;
+    replay_vertex.shared_shader_constant_offsets = {
+        (packed_indices >> 24) & 0xFFu,
+        (packed_indices >> 16) & 0xFFu,
+        (packed_indices >> 8) & 0xFFu,
+        packed_indices & 0xFFu,
+    };
     replay_vertex.has_shared_shader_skin = true;
     return;
   }
@@ -922,6 +951,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   switch (event.vertex_shader_hash) {
     case 0xED8D12865D27DEBFull:
     case 0x45C4DDDAAA10F75Full:
+    case 0x1C9E2812AEBDBE4Eull:
       constants = {0, 1, 2, 3};
       negate_y_row = true;
       supports_bone0_upstream = true;
@@ -1037,7 +1067,10 @@ ProjectionCandidate FindNativeReplayProjectionCandidate(
   const bool use_shader_final =
       strategy == "shader-final" || strategy == "shader-final-or-heuristic";
   const bool use_shader_bone0 = strategy == "shader-bone0-final";
-  const bool use_shader_skinned = strategy == "shader-skinned-final";
+  const bool use_shader_skinned =
+      strategy == "shader-skinned-final" ||
+      (strategy == "shader-final-or-heuristic" &&
+       IsNativeReplaySharedShaderSkinProjectionShader(event.vertex_shader_hash));
   const bool use_heuristic = strategy.empty() || strategy == "heuristic" ||
                              strategy == "shader-final-or-heuristic";
 
@@ -1740,17 +1773,25 @@ bool CanReplayNativeDepthOnlyDraw(const DrawEvent& event) {
          FindNativeReplaySolidVertexFetch(event);
 }
 
-bool CanReplayNativeD5ProjectedTransformDraw(const DrawEvent& event) {
-  if (event.vertex_shader_hash != 0xD5CCD0C915DDCC0Bull ||
-      event.pixel_shader_hash != 0x7B81C162CBA6D195ull ||
-      !HasNativeReplayColorOutput(event) || event.vertex_memexport_mask != 0 ||
-      event.pixel_memexport_mask != 0 || HasVizQuerySideEffect(event) ||
-      !IsNativeReplayTexturedTriangleShape(event)) {
+bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
+  const bool d5_projected =
+      event.vertex_shader_hash == 0xD5CCD0C915DDCC0Bull &&
+      event.pixel_shader_hash == 0x7B81C162CBA6D195ull;
+  const bool indexed_stride11_projected =
+      event.vertex_shader_hash == 0x1C9E2812AEBDBE4Eull &&
+      event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
+  if ((!d5_projected && !indexed_stride11_projected) || !HasNativeReplayColorOutput(event) ||
+      event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
+      HasVizQuerySideEffect(event) || !IsNativeReplayTexturedTriangleShape(event)) {
     return false;
   }
 
   const VertexFetchSummary* vertex_fetch = FindDecodableNativeReplayTexturedVertexFetch(event);
   if (!vertex_fetch || IsNativeReplayScreenSpaceTexturedVertexFetch(*vertex_fetch)) {
+    return false;
+  }
+  if (indexed_stride11_projected && vertex_fetch->stride_words != 11) {
     return false;
   }
 
@@ -1776,7 +1817,7 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
       }
       return NativeReplaySupport::kSupportedTextured;
     }
-    if (CanReplayNativeD5ProjectedTransformDraw(event)) {
+    if (CanReplayNativeSupportedProjectedTransformDraw(event)) {
       return NativeReplaySupport::kSupportedProjectedTransform;
     }
     if (!FindNativeReplayTexturedVertexFetch(event)) {
