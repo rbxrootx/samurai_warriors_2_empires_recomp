@@ -528,6 +528,16 @@
   `extracted\native_render_samples\native_projected_gap_replay_20260718-022845.bmp` with four
   captured draws and finite/inside metrics, but still renders as a long thin strip. Keep 45C4
   classified as a separate follow-up until its branch semantics and draw-family purpose are mapped.
+- Native GPU replay now records texture format/tiled metadata and supports Xenos `k_8_8_8_8`
+  (`fmt=6`) tiled 2D texture fetches as `DXGI_FORMAT_R8G8B8A8_UNORM`. Validation
+  `runtime.native-transform-probe-20260718-025213.log` used relaxed ED8D thresholds, exited with
+  code `0`, kept event JSON off, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-025213.bmp` using eight
+  captured D3D11 draws. Retained lines show `texture_fmt=6 tiled=1 texture=1280x720` for eight
+  projected draws in repeated passes, and there were no D3D11 texture/SRV creation failures.
+  ImageMagick identified the BMP as nonblank `1280x720` TrueColorAlpha output. This replaces the
+  previous `texture_fetch` blocker for the render-target feedback texture family with ordinary
+  draw-family/projection work.
 
 ## Save And Storage Path
 

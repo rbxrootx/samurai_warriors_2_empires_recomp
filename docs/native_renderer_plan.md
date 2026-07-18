@@ -910,6 +910,21 @@ captured draws, and the candidate metrics stayed finite/inside (`1.000`), but th
 as a long thin strip. Treat this hash as a separate draw family until the branch semantics and
 texture/layout classification are mapped more exactly.
 
+The projected replay now carries texture format/tiled metadata into D3D11 and supports the first
+render-target feedback texture family: Xenos `k_8_8_8_8` (`fmt=6`) tiled 2D textures. The replay
+path copies the padded tiled footprint, untile-converts it with the Xenos 2D tiled offset math, and
+uploads it as `DXGI_FORMAT_R8G8B8A8_UNORM` alongside the existing linear BC3 path.
+
+Validation `runtime.native-transform-probe-20260718-025213.log` used relaxed ED8D thresholds
+(`-ProjectedGapMinVertices 3 -ProjectedGapMinIndices 0 -ReplayDrawLimit 12`), exited with code `0`,
+kept `native_render_events=false`, touched no JSON event stream, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-025213.bmp` using eight
+captured D3D11 draws. Retained draw logs repeatedly show
+`texture_fmt=6 tiled=1 texture=1280x720` for frames such as `2838` draws `43-48/139/140`; no D3D11
+texture or SRV creation failures appeared. ImageMagick identified the BMP as `1280x720`
+TrueColorAlpha with nonzero mean/standard deviation. This proves the
+first tiled render-target texture fetch can enter native replay without the large JSON dump path.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -928,8 +943,8 @@ work should proceed in this order:
    the stride-8/9/10 model vertex layouts, shader constants, and shader transforms rather than
    primitive expansion alone. Use gap-only samples, OBJ previews, and ucode dumps to keep that work
    bounded and visually inspectable.
-4. Generalize texture decode/upload beyond the first confirmed linear BC3 path: tiled textures,
-   additional Xenos formats, mip tails, arrays, and render-target textures.
+4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
+   paths: additional Xenos formats, mip tails, arrays, swizzles, and render-target ownership.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare
    them against exported `G1M_` meshes.
 6. Extend the replay path to one stage/character mesh family, still side-by-side with the existing

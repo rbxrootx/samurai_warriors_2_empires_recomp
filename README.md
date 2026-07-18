@@ -38,8 +38,9 @@ References:
   classify render-state buckets, and replay supported title/menu draw families through a native
   D3D11 path.
 - The opt-in projected-gap replay can now submit selected gameplay transform-gap meshes through
-  D3D11 debug-fit output. This is visibility scaffolding for native gameplay rendering, not the
-  final camera/shader path.
+  D3D11 debug-fit output, including the first confirmed tiled `k_8_8_8_8` render-target texture
+  fetch family. This is visibility scaffolding for native gameplay rendering, not the final
+  camera/shader path.
 
 Full native gameplay rendering is not complete yet. The next big graphics milestone is correlating
 indexed `triangle_strip` battle draws and stride-8/9/10 vertex layouts with decoded G1M meshes,
@@ -56,6 +57,7 @@ materials, constants, and render-target ownership.
 | `docs/runtime_hooks.md` | Hook map and runtime behavior notes. |
 | `docs/modding_support.md` | Archive, G1M, stage, weapon, character, and Blender-facing modding notes. |
 | `docs/native_renderer_plan.md` | Native-renderer plan, validation notes, and next graphics milestones. |
+| `docs/debug_dev_tooling_modding_priorities.md` | Compact debug/dev-tooling leads and high-value IDA/modding priorities. |
 | `docs/external_tooling.md` | Public Koei/Omega Force tooling references and repo hygiene notes. |
 | `tools` | Extractors, converters, summaries, G1M OBJ export/patch tooling, and IDA label helpers. |
 | `mods/loose` | Local loose-file override root used by launch scripts. |

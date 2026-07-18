@@ -33,6 +33,8 @@ struct ReplayVertex {
 
 struct ReplayTexture {
   uint32_t source_base_address = 0;
+  uint32_t format = 0;
+  uint32_t tiled = 0;
   uint32_t width = 0;
   uint32_t height = 0;
   uint32_t width_blocks = 0;

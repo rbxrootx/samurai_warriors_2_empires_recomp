@@ -28,6 +28,8 @@ constexpr uint32_t kEndianNone = 0;
 constexpr uint32_t kEndian8In16 = 1;
 constexpr uint32_t kEndian8In32 = 2;
 constexpr uint32_t kEndian16In32 = 3;
+constexpr uint32_t kXenosFormat8888 = 6;
+constexpr uint32_t kXenosFormatDxt45 = 20;
 
 struct BmpFileHeader {
   uint16_t signature = 0x4D42;
@@ -173,6 +175,40 @@ std::vector<uint8_t> BuildPcBc3TextureBytes(const ReplayTexture& texture) {
   return output;
 }
 
+uint32_t TiledOffset2D(uint32_t x, uint32_t y, uint32_t pitch, uint32_t bytes_per_block_log2) {
+  pitch = ((pitch + 31u) / 32u) * 32u;
+  const uint32_t macro = ((x >> 5) + (y >> 5) * (pitch >> 5)) << (bytes_per_block_log2 + 7);
+  const uint32_t micro = ((x & 7u) + ((y & 0xEu) << 2)) << bytes_per_block_log2;
+  const uint32_t offset = macro + ((micro & ~0xFu) << 1) + (micro & 0xFu) + ((y & 1u) << 4);
+  return ((offset & ~0x1FFu) << 3) + ((y & 16u) << 7) + ((offset & 0x1C0u) << 2) +
+         (((((y & 8u) >> 2) + (x >> 3)) & 3u) << 6) + (offset & 0x3Fu);
+}
+
+std::vector<uint8_t> BuildPcRgba8TextureBytes(const ReplayTexture& texture) {
+  const std::vector<uint8_t>& texture_bytes = ReplayTextureBytes(texture);
+  std::vector<uint8_t> output(size_t(texture.width) * texture.height * 4u);
+  if (texture.width == 0 || texture.height == 0) {
+    return output;
+  }
+
+  const uint32_t pitch_texels =
+      texture.row_pitch_bytes ? std::max(texture.row_pitch_bytes / 4u, texture.width) : texture.width;
+  for (uint32_t y = 0; y < texture.height; ++y) {
+    for (uint32_t x = 0; x < texture.width; ++x) {
+      const size_t output_offset = (size_t(y) * texture.width + x) * 4u;
+      const size_t input_offset =
+          texture.tiled ? TiledOffset2D(x, y, pitch_texels, 2)
+                        : size_t(y) * texture.row_pitch_bytes + x * 4u;
+      if (input_offset + 4u > texture_bytes.size() || output_offset + 4u > output.size()) {
+        continue;
+      }
+      CopySwapBlock(texture.endian, output.data() + output_offset, texture_bytes.data() + input_offset,
+                    4);
+    }
+  }
+  return output;
+}
+
 uint64_t HashReplayBytes(const uint8_t* data, size_t size) {
   uint64_t hash = 14695981039346656037ull;
   for (size_t i = 0; i < size; ++i) {
@@ -190,6 +226,8 @@ uint64_t TextureCacheKey(const ReplayTexture& texture) {
   const std::vector<uint8_t>& texture_bytes = ReplayTextureBytes(texture);
   uint64_t key = 0;
   MixTextureKey(key, texture.source_base_address);
+  MixTextureKey(key, texture.format);
+  MixTextureKey(key, texture.tiled);
   MixTextureKey(key, texture.width);
   MixTextureKey(key, texture.height);
   MixTextureKey(key, texture.width_blocks);
@@ -501,21 +539,41 @@ struct ReplayD3D11Pipeline {
       return existing->second.Get();
     }
 
-    const std::vector<uint8_t> pc_texture_bytes = BuildPcBc3TextureBytes(draw.texture);
+    DXGI_FORMAT texture_format = DXGI_FORMAT_UNKNOWN;
+    uint32_t upload_pitch_bytes = 0;
+    uint32_t upload_slice_pitch_bytes = 0;
+    std::vector<uint8_t> pc_texture_bytes;
+    if (draw.texture.format == kXenosFormatDxt45) {
+      texture_format = DXGI_FORMAT_BC3_UNORM;
+      upload_pitch_bytes = draw.texture.row_pitch_bytes;
+      upload_slice_pitch_bytes = draw.texture.row_pitch_bytes * draw.texture.height_blocks;
+      pc_texture_bytes = BuildPcBc3TextureBytes(draw.texture);
+    } else if (draw.texture.format == kXenosFormat8888) {
+      texture_format = DXGI_FORMAT_R8G8B8A8_UNORM;
+      upload_pitch_bytes = draw.texture.width * 4u;
+      upload_slice_pitch_bytes = upload_pitch_bytes * draw.texture.height;
+      pc_texture_bytes = BuildPcRgba8TextureBytes(draw.texture);
+    }
+    if (texture_format == DXGI_FORMAT_UNKNOWN || pc_texture_bytes.empty()) {
+      REXLOG_WARN("SW2E native GPU replay skipped frame {} draw {} unsupported texture format {}",
+                  draw.frame, draw.draw, draw.texture.format);
+      return nullptr;
+    }
+
     D3D11_TEXTURE2D_DESC texture_desc = {};
     texture_desc.Width = draw.texture.width;
     texture_desc.Height = draw.texture.height;
     texture_desc.MipLevels = 1;
     texture_desc.ArraySize = 1;
-    texture_desc.Format = DXGI_FORMAT_BC3_UNORM;
+    texture_desc.Format = texture_format;
     texture_desc.SampleDesc.Count = 1;
     texture_desc.Usage = D3D11_USAGE_IMMUTABLE;
     texture_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
     D3D11_SUBRESOURCE_DATA texture_data = {};
     texture_data.pSysMem = pc_texture_bytes.data();
-    texture_data.SysMemPitch = draw.texture.row_pitch_bytes;
-    texture_data.SysMemSlicePitch = draw.texture.row_pitch_bytes * draw.texture.height_blocks;
+    texture_data.SysMemPitch = upload_pitch_bytes;
+    texture_data.SysMemSlicePitch = upload_slice_pitch_bytes;
 
     ComPtr<ID3D11Texture2D> texture;
     HRESULT hr = device->CreateTexture2D(&texture_desc, &texture_data, &texture);
@@ -677,6 +735,8 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
   if (!pipeline.Ensure(device, width, height)) {
     return 0;
   }
+
+  pipeline.texture_view_cache.clear();
 
   const float clear_color[] = {0.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(render_target, clear_color);

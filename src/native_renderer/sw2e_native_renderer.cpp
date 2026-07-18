@@ -268,6 +268,7 @@ bool HasNativeReplayColorOutput(const DrawEvent& event) {
 constexpr uint32_t kGuestPhysicalMemoryBytes = 0x20000000;
 constexpr uint64_t kFnv1a64Offset = 14695981039346656037ull;
 constexpr uint64_t kFnv1a64Prime = 1099511628211ull;
+constexpr uint32_t kXenosFormat8888 = 6;
 constexpr uint32_t kXenosFormatDxt45 = 20;
 constexpr uint32_t kXenosDimension2DOrStacked = 1;
 constexpr uint32_t kXenosPrimitiveTriangleList = 4;
@@ -1319,30 +1320,55 @@ TextureDumpPlan BuildTextureDumpPlan(const TextureFetchSummary& fetch, uint32_t 
   TextureDumpPlan plan;
   plan.requested_size = sample_limit;
 
-  if (fetch.format != kXenosFormatDxt45 || fetch.tiled != 0 ||
-      fetch.dimension != kXenosDimension2DOrStacked || fetch.width == 0 || fetch.height == 0) {
+  if (fetch.dimension != kXenosDimension2DOrStacked || fetch.width == 0 || fetch.height == 0) {
     return plan;
   }
 
-  plan.known_pc_format = true;
-  plan.block_bytes = kBc3BytesPerBlock;
-  plan.width_blocks = AlignUp(fetch.width, kBc3BlockWidth) / kBc3BlockWidth;
-  plan.height_blocks = AlignUp(fetch.height, kBc3BlockHeight) / kBc3BlockHeight;
-  plan.array_size = std::max(fetch.depth, uint32_t(1));
-
   const uint32_t pitch_texels = fetch.pitch ? (fetch.pitch << 5) : fetch.width;
-  const uint32_t row_pitch_blocks =
-      AlignUp(AlignUp(std::max(pitch_texels, fetch.width), kBc3BlockWidth) / kBc3BlockWidth,
-              kTextureTileWidthHeightBlocks);
-  const uint64_t row_pitch_bytes64 = uint64_t(row_pitch_blocks) * kBc3BytesPerBlock;
-  const uint64_t one_slice_data_extent =
-      row_pitch_bytes64 * (plan.height_blocks - 1) +
-      uint64_t(plan.width_blocks) * kBc3BytesPerBlock;
-  const uint64_t slice_stride =
-      AlignUp64(row_pitch_bytes64 * AlignUp(plan.height_blocks, kTextureTileWidthHeightBlocks),
-                kTextureSubresourceAlignmentBytes);
-  const uint64_t full_size =
-      slice_stride * (plan.array_size - 1) + one_slice_data_extent;
+  uint64_t row_pitch_bytes64 = 0;
+  uint64_t full_size = 0;
+  if (fetch.format == kXenosFormatDxt45 && fetch.tiled == 0) {
+    plan.known_pc_format = true;
+    plan.block_bytes = kBc3BytesPerBlock;
+    plan.width_blocks = AlignUp(fetch.width, kBc3BlockWidth) / kBc3BlockWidth;
+    plan.height_blocks = AlignUp(fetch.height, kBc3BlockHeight) / kBc3BlockHeight;
+    plan.array_size = std::max(fetch.depth, uint32_t(1));
+
+    const uint32_t row_pitch_blocks =
+        AlignUp(AlignUp(std::max(pitch_texels, fetch.width), kBc3BlockWidth) / kBc3BlockWidth,
+                kTextureTileWidthHeightBlocks);
+    row_pitch_bytes64 = uint64_t(row_pitch_blocks) * kBc3BytesPerBlock;
+    const uint64_t one_slice_data_extent =
+        row_pitch_bytes64 * (plan.height_blocks - 1) +
+        uint64_t(plan.width_blocks) * kBc3BytesPerBlock;
+    const uint64_t slice_stride =
+        AlignUp64(row_pitch_bytes64 * AlignUp(plan.height_blocks, kTextureTileWidthHeightBlocks),
+                  kTextureSubresourceAlignmentBytes);
+    full_size = slice_stride * (plan.array_size - 1) + one_slice_data_extent;
+  } else if (fetch.format == kXenosFormat8888) {
+    plan.known_pc_format = true;
+    plan.block_bytes = 4;
+    plan.width_blocks = fetch.width;
+    plan.height_blocks = fetch.height;
+    plan.array_size = std::max(fetch.depth, uint32_t(1));
+
+    const uint32_t row_pitch_texels =
+        fetch.tiled ? AlignUp(std::max(pitch_texels, fetch.width), kTextureTileWidthHeightBlocks)
+                    : std::max(pitch_texels, fetch.width);
+    row_pitch_bytes64 = uint64_t(row_pitch_texels) * plan.block_bytes;
+    const uint64_t one_slice_data_extent =
+        row_pitch_bytes64 * (plan.height_blocks - 1) +
+        uint64_t(plan.width_blocks) * plan.block_bytes;
+    const uint64_t slice_stride =
+        fetch.tiled ? AlignUp64(row_pitch_bytes64 *
+                                    AlignUp(plan.height_blocks, kTextureTileWidthHeightBlocks),
+                                kTextureSubresourceAlignmentBytes)
+                    : row_pitch_bytes64 * plan.height_blocks;
+    full_size = fetch.tiled ? slice_stride * plan.array_size
+                            : slice_stride * (plan.array_size - 1) + one_slice_data_extent;
+  } else {
+    return plan;
+  }
 
   if (row_pitch_bytes64 > UINT32_MAX || full_size > UINT32_MAX) {
     return plan;
@@ -1966,6 +1992,8 @@ class Sidecar final : public EventSink {
     }
 
     replay_draw.texture.source_base_address = texture_fetch->base_address_bytes;
+    replay_draw.texture.format = texture_fetch->format;
+    replay_draw.texture.tiled = texture_fetch->tiled;
     replay_draw.texture.width = texture_fetch->width;
     replay_draw.texture.height = texture_fetch->height;
     replay_draw.texture.width_blocks = texture_plan->width_blocks;
@@ -2138,6 +2166,8 @@ class Sidecar final : public EventSink {
     }
 
     replay_draw.texture.source_base_address = texture_fetch->base_address_bytes;
+    replay_draw.texture.format = texture_fetch->format;
+    replay_draw.texture.tiled = texture_fetch->tiled;
     replay_draw.texture.width = texture_fetch->width;
     replay_draw.texture.height = texture_fetch->height;
     replay_draw.texture.width_blocks = texture_plan->width_blocks;
@@ -2175,12 +2205,29 @@ class Sidecar final : public EventSink {
                                                   NativeReplaySupport replay_support) {
     if (native_gpu_replay_projected_reject_log_count_ <
         kNativeGpuReplayProjectedRejectLogLimit) {
+      char texture_summary[256] = "none";
+      if (event.texture_fetch_summary_count != 0) {
+        const auto& tex0 = event.texture_fetches[0];
+        std::snprintf(texture_summary, sizeof(texture_summary),
+                      "t0=c%u fmt=%u dim=%u tiled=%u %ux%ux%u pitch=%u addr=0x%08x",
+                      tex0.fetch_constant, tex0.format, tex0.dimension, tex0.tiled, tex0.width,
+                      tex0.height, tex0.depth, tex0.pitch, tex0.base_address_bytes);
+        if (event.texture_fetch_summary_count > 1) {
+          const auto& tex1 = event.texture_fetches[1];
+          const size_t used = std::strlen(texture_summary);
+          std::snprintf(texture_summary + used, sizeof(texture_summary) - used,
+                        " t1=c%u fmt=%u dim=%u tiled=%u %ux%ux%u pitch=%u addr=0x%08x",
+                        tex1.fetch_constant, tex1.format, tex1.dimension, tex1.tiled,
+                        tex1.width, tex1.height, tex1.depth, tex1.pitch,
+                        tex1.base_address_bytes);
+        }
+      }
       REXLOG_INFO(
           "SW2E projected transform gap rejected frame {} draw {}: {} support={} prim={} "
-          "indexed={} index_count={} vfetches={} tfetches={}",
+          "indexed={} index_count={} vfetches={} tfetches={} textures={}",
           event.frame_index, event.draw_index, reason, NativeReplaySupportName(replay_support),
           event.primitive_type, event.indexed, event.index_count, event.vertex_fetch_summary_count,
-          event.texture_fetch_summary_count);
+          event.texture_fetch_summary_count, texture_summary);
     } else if (native_gpu_replay_projected_reject_log_count_ ==
                kNativeGpuReplayProjectedRejectLogLimit) {
       REXLOG_INFO("SW2E projected transform gap suppressing further rejection logs");
@@ -2296,10 +2343,12 @@ class Sidecar final : public EventSink {
       const gpu_replay::ReplayDraw& draw = draws[i];
       REXLOG_INFO(
           "SW2E native GPU replay retained [{}] kind={} frame={} draw={} VS={:#018x} "
-          "PS={:#018x} stride_words={} vertices={} indices={} score={}",
+          "PS={:#018x} stride_words={} vertices={} indices={} texture_fmt={} tiled={} "
+          "texture={}x{} score={}",
           i, NativeGpuReplayDrawKindName(draw.kind), draw.frame, draw.draw,
           draw.vertex_shader_hash, draw.pixel_shader_hash, draw.vertex_stride_words,
-          draw.vertices.size(), draw.indices.size(), NativeGpuReplayDrawScore(draw));
+          draw.vertices.size(), draw.indices.size(), draw.texture.format, draw.texture.tiled,
+          draw.texture.width, draw.texture.height, NativeGpuReplayDrawScore(draw));
     }
     if (draws.size() > log_count) {
       REXLOG_INFO("SW2E native GPU replay retained {} additional draws", draws.size() - log_count);
