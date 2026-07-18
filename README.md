@@ -40,7 +40,7 @@ References:
 - The opt-in projected-gap replay can now submit selected gameplay transform-gap families through
   D3D11 debug-fit output, including the first confirmed tiled `k_8_8_8_8` render-target texture
   fetch family, the repeated D5 stride-9 terrain/ground strip shader family, and the first
-  promoted 1C9E indexed stride-11 shared-skin projection family.
+  promoted 1C9E and 1B2E indexed stride-11 shared-skin projection families.
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
@@ -170,7 +170,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Replay promoted projected-transform gameplay families as standard
   `supported_projected_transform` draws, including the `D5CCD0C915DDCC0B` stride-9 direct
   `c7..c10` terrain/ground-strip path and the `1C9E2812AEBDBE4E` indexed stride-11 shared-skin
-  `c[4+a0]..c[6+a0]` plus `c0..c3` projection path.
+  `c[4+a0]..c[6+a0]` plus `c0..c3` projection path. The `1B2E9C6960B0C86E /
+  D10452A3E31F9C61` stride-11 character/weapon family is also promoted through its direct
+  `c[15+a0]..c[17+a0]` skin block and `c11..c14` projection block.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding

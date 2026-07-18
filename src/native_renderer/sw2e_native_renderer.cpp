@@ -205,6 +205,8 @@ struct ProjectionCandidate {
   bool column_major = false;
   bool has_upstream_transform = false;
   bool use_shared_shader_skin = false;
+  bool use_1b2e_character_skin = false;
+  uint32_t shared_shader_constant_base = 4;
   const char* source = "none";
   float finite_ratio = 0.0f;
   float inside_ratio = 0.0f;
@@ -404,7 +406,8 @@ float ReadF32(const uint8_t* data, uint32_t endian) {
 bool IsNativeReplaySharedShaderSkinProjectionShader(uint64_t vertex_shader_hash) {
   return vertex_shader_hash == 0xED8D12865D27DEBFull ||
          vertex_shader_hash == 0x45C4DDDAAA10F75Full ||
-         vertex_shader_hash == 0x1C9E2812AEBDBE4Eull;
+         vertex_shader_hash == 0x1C9E2812AEBDBE4Eull ||
+         vertex_shader_hash == 0x1B2E9C6960B0C86Eull;
 }
 
 uint32_t NativeReplayFloatFormatComponentCount(uint32_t data_format) {
@@ -581,7 +584,8 @@ void DecodeNativeReplaySharedShaderSkinInputs(const uint8_t* vertex,
     return;
   }
 
-  if (vertex_shader_hash == 0x1C9E2812AEBDBE4Eull) {
+  if (vertex_shader_hash == 0x1C9E2812AEBDBE4Eull ||
+      vertex_shader_hash == 0x1B2E9C6960B0C86Eull) {
     if (vertex_stride_bytes < 20) {
       return;
     }
@@ -653,7 +657,8 @@ std::optional<std::array<float, 3>> EvaluateNativeReplaySharedShaderBone(
   const std::array<float, 4> source = {vertex.x, vertex.y, vertex.w, vertex.z};
   std::array<float, 3> output = {};
   for (uint32_t row = 0; row < 3; ++row) {
-    const uint32_t constant_index = 6u - row + constant_offset;
+    const uint32_t constant_index = projection.shared_shader_constant_base + 2u - row +
+                                    constant_offset;
     if (constant_index >= projection.shared_shader_constant_present.size() ||
         !projection.shared_shader_constant_present[constant_index]) {
       return std::nullopt;
@@ -714,8 +719,81 @@ std::optional<std::array<float, 3>> EvaluateNativeReplaySharedShaderSkin(
   return output;
 }
 
+std::optional<std::array<float, 4>> EvaluateNativeReplay1B2ECharacterClip(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (!vertex.has_shared_shader_skin) {
+    return std::nullopt;
+  }
+
+  const float weight0 = vertex.shared_shader_weight0;
+  const float weight1 = vertex.shared_shader_weight1;
+  if (!std::isfinite(weight0) || !std::isfinite(weight1) ||
+      std::max(std::abs(weight0), std::abs(weight1)) > 8.0f) {
+    return std::nullopt;
+  }
+
+  const auto evaluate_bone = [&](uint32_t offset) -> std::optional<std::array<float, 3>> {
+    std::array<float, 3> bone = {};
+    for (uint32_t row = 0; row < 3; ++row) {
+      const uint32_t constant_index = 15u + row + offset;
+      if (constant_index >= projection.shared_shader_constant_present.size() ||
+          !projection.shared_shader_constant_present[constant_index]) {
+        return std::nullopt;
+      }
+      const auto& c = projection.shared_shader_constants[constant_index];
+      const float value = c[3] + vertex.z * c[2] + vertex.x * c[0] + vertex.y * c[1];
+      if (!std::isfinite(value)) {
+        return std::nullopt;
+      }
+      bone[row] = value;
+    }
+    return bone;
+  };
+
+  const std::optional<std::array<float, 3>> bone0 =
+      evaluate_bone(vertex.shared_shader_constant_offsets[0]);
+  const std::optional<std::array<float, 3>> bone1 =
+      evaluate_bone(vertex.shared_shader_constant_offsets[1]);
+  if (!bone0 || !bone1) {
+    return std::nullopt;
+  }
+
+  // Ucode builds r0.y/r0.z/r0.w from c16/c15/c17, then projects r0.wzy.
+  const std::array<float, 3> projected_source = {
+      (*bone0)[2] * weight0 + (*bone1)[2] * weight1,
+      (*bone0)[0] * weight0 + (*bone1)[0] * weight1,
+      (*bone0)[1] * weight0 + (*bone1)[1] * weight1,
+  };
+
+  std::array<float, 4> clip = {};
+  for (uint32_t row = 0; row < 4; ++row) {
+    const uint32_t constant_index = 11u + row;
+    if (constant_index >= projection.shared_shader_constant_present.size() ||
+        !projection.shared_shader_constant_present[constant_index]) {
+      return std::nullopt;
+    }
+    const auto& c = projection.shared_shader_constants[constant_index];
+    clip[row] = projected_source[0] * c[2] + projected_source[1] * c[0] +
+                projected_source[2] * c[1] + c[3];
+    if (!std::isfinite(clip[row])) {
+      return std::nullopt;
+    }
+  }
+  return clip;
+}
+
 std::array<float, 4> TransformNativeReplayPositionWithCandidate(
     const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (projection.use_1b2e_character_skin) {
+    const std::optional<std::array<float, 4>> clip =
+        EvaluateNativeReplay1B2ECharacterClip(vertex, projection);
+    if (!clip) {
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      return {nan, nan, nan, nan};
+    }
+    return *clip;
+  }
+
   gpu_replay::ReplayVertex projected_vertex = vertex;
   if (projection.use_shared_shader_skin) {
     const std::optional<std::array<float, 3>> output =
@@ -947,6 +1025,8 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   bool direct_projection_rows = false;
   bool supports_bone0_upstream = false;
   bool supports_shared_shader_skin = false;
+  bool use_1b2e_character_skin = false;
+  uint32_t shared_shader_constant_base = 4;
   const char* source = nullptr;
   switch (event.vertex_shader_hash) {
     case 0xED8D12865D27DEBFull:
@@ -959,6 +1039,14 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       source = include_shared_shader_skin ? "shader-skinned-c4-c6-c0-c3"
                                           : include_bone0_upstream ? "shader-bone0-c4-c6-c0-c3"
                                                                    : "shader-final-c0-c3";
+      break;
+    case 0x1B2E9C6960B0C86Eull:
+      constants = {11, 12, 13, 14};
+      supports_shared_shader_skin = true;
+      use_1b2e_character_skin = true;
+      shared_shader_constant_base = 15;
+      source = include_shared_shader_skin ? "shader-skinned-c15-c17-c11-c14"
+                                          : "shader-final-c11-c14";
       break;
     case 0x1A2E173CABDD3E80ull:
       constants = {3, 4, 5, 6};
@@ -988,6 +1076,8 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   candidate.source = source;
   candidate.constant_indices = constants;
   candidate.rows = rows;
+  candidate.shared_shader_constant_base = shared_shader_constant_base;
+  candidate.use_1b2e_character_skin = include_shared_shader_skin && use_1b2e_character_skin;
   if (include_bone0_upstream &&
       !BuildNativeReplayBone0UpstreamRows(event, candidate.upstream_constant_indices,
                                           candidate.upstream_rows)) {
@@ -1781,7 +1871,12 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0x1C9E2812AEBDBE4Eull &&
       event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
-  if ((!d5_projected && !indexed_stride11_projected) || !HasNativeReplayColorOutput(event) ||
+  const bool character_stride11_projected =
+      event.vertex_shader_hash == 0x1B2E9C6960B0C86Eull &&
+      event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
+  if ((!d5_projected && !indexed_stride11_projected && !character_stride11_projected) ||
+      !HasNativeReplayColorOutput(event) ||
       event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
       HasVizQuerySideEffect(event) || !IsNativeReplayTexturedTriangleShape(event)) {
     return false;
@@ -1791,7 +1886,8 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
   if (!vertex_fetch || IsNativeReplayScreenSpaceTexturedVertexFetch(*vertex_fetch)) {
     return false;
   }
-  if (indexed_stride11_projected && vertex_fetch->stride_words != 11) {
+  if ((indexed_stride11_projected || character_stride11_projected) &&
+      vertex_fetch->stride_words != 11) {
     return false;
   }
 
@@ -2534,7 +2630,9 @@ class Sidecar final : public EventSink {
     if (native_gpu_replay_captured_draw_log_count_ <= kNativeGpuReplayDrawLogLimit) {
       char upstream_constants[64] = "none";
       if (projection.use_shared_shader_skin) {
-        std::snprintf(upstream_constants, sizeof(upstream_constants), "skinned:c4+a0..c6+a0");
+        std::snprintf(upstream_constants, sizeof(upstream_constants), "skinned:c%u+a0..c%u+a0",
+                      projection.shared_shader_constant_base,
+                      projection.shared_shader_constant_base + 2);
       } else if (projection.has_upstream_transform) {
         std::snprintf(upstream_constants, sizeof(upstream_constants), "c%u,c%u,c%u",
                       projection.upstream_constant_indices[0],

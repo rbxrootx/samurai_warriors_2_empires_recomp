@@ -636,8 +636,20 @@
   assertions and zero native replay failures, reached repeated gameplay frames with
   `native_supported=1220`, `native_projected=470`, and unsupported buckets reduced to `0/5/1/0/207`,
   then wrote `extracted\native_render_samples\native_1c9e_projected_standard_20260718-044240.bmp`
-  using `1388` captured D3D11 draws. The next repeated projected blocker is
-  `VS=0x1B2E9C6960B0C86E / PS=0xD10452A3E31F9C61`.
+  using `1388` captured D3D11 draws.
+- The indexed stride-11 `VS=0x1B2E9C6960B0C86E / PS=0xD10452A3E31F9C61` character/weapon projection
+  family is now promoted as `supported_projected_transform`. It uses the same blend/palette words as
+  1C9E, but the shader ucode skins through `c[15+a0]..c[17+a0]` and projects through `c11..c14`.
+  Focused validation `runtime.native-transform-probe-20260718-050328.log` exited `0`, retained
+  repeated draws with `842` vertices and `2088` expanded indices, and wrote a centered character
+  silhouette to `extracted\native_render_samples\native_projected_gap_replay_20260718-050328.bmp`.
+  Standard validation `runtime.native-1b2e-projected-standard-20260718-050931.log` exited `0`,
+  reported no assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay
+  frames with `native_supported=1309`, `native_projected=559`, and unsupported buckets down to
+  `0/5/1/0/117`, then wrote
+  `extracted\native_render_samples\native_1b2e_projected_standard_20260718-050931.bmp` using `1388`
+  captured D3D11 draws. The current repeated transform blocker is
+  `VS=0xA395C843676E6C8D / PS=0x850DBBBA56015D1A`, an indexed stride-10 attrs-5 family.
 
 ## Save And Storage Path
 

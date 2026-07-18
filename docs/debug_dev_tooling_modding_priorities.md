@@ -132,7 +132,8 @@ scenario-specific stage metadata will surface.
    `0x823717B0`, `0x823727C0`, `0x8236D8F0`, and `0x8236D978` labeled, but treat them as render
    diagnostics unless a reachable gameplay-facing caller appears.
 10. Native-render draw families: keep naming shader/draw-family evidence from bounded probes,
-    especially `ED8D12865D27DEBF`, `45C4DDDAAA10F75F`, stride-8/9/10 layouts, and tiled/render
+    especially the promoted D5, 1C9E, and 1B2E projection paths plus the current
+    `A395C843676E6C8D / 850DBBBA56015D1A` stride-10 blocker, stride-8/9/10 layouts, and tiled/render
     target texture fetches. This supports native rendering and also helps correlate runtime meshes
     back to archive `G1M_` data.
 

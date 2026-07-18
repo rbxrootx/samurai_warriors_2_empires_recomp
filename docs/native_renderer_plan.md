@@ -1082,10 +1082,33 @@ gameplay frames with `native_supported=1220`, `native_tex=728`, `native_solid=12
 captured D3D11 draws; a sampled `1280x720` grid found `3072/3072` nonblack points with mean RGB
 `120.88`.
 
-The next repeated projected-transform blocker in the standard gameplay pass is now
-`VS=0x1B2E9C6960B0C86E` / `PS=0xD10452A3E31F9C61`, an indexed stride-11 attrs-6 family. The single
-indexed layout gap, five shape gaps, and native render-target composition still block full native
-scene ownership.
+The indexed stride-11 `VS=0x1B2E9C6960B0C86E` / `PS=0xD10452A3E31F9C61` character/weapon family is
+now promoted as `supported_projected_transform`. The dumped ucode maps position words `0..2`, blend
+word `3`, packed palette indices word `4`, normal/lighting data at word `5`, color/aux data at word
+`8`, and UV words `9..10`. Unlike the 1C9E path, this shader builds its skinned source through
+`c[15+a0]..c[17+a0]`, reorders the skinned rows as the ucode does, then applies the final
+`c11..c14` projection block.
+
+Focused validation `runtime.native-transform-probe-20260718-050328.log` exited `0`, kept event JSON
+off, retained the family with `842` vertices and `2088` expanded indices per draw, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-050328.bmp`. The shader-fit
+candidate reached `finite=1.000` and `inside=1.000` on repeated draws; the BMP shows a centered
+skinned character/armor silhouette, with a 16-pixel sample grid finding `707/3600` nonblack points
+and mean RGB sum `71.98`. Standard no-JSON validation
+`runtime.native-1b2e-projected-standard-20260718-050931.log` exited `0`, reported no assertion,
+fatal, crash, exception, or native replay failure lines, and reached repeated gameplay frames with
+`native_supported=1309`, `native_tex=728`, `native_solid=12`, `native_depth=10`,
+`native_projected=559`, and `unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/117`.
+The replay wrote
+`extracted\native_render_samples\native_1b2e_projected_standard_20260718-050931.bmp` using `1388`
+captured D3D11 draws; the BMP is nonblank across a 16-pixel sample grid, but it is still diagnostic
+composition, not a correct full gameplay frame. The matched `[error]` lines in that run were the
+known compatibility-backend resolve warnings.
+
+The next repeated transform blocker in the standard gameplay pass is now `VS=0xA395C843676E6C8D` /
+`PS=0x850DBBBA56015D1A`, an indexed stride-10 attrs-5 family with a linear format-20 texture. The
+single indexed layout gap, five shape gaps, and native render-target composition still block full
+native scene ownership.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
@@ -1103,10 +1126,11 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips plus the D5 and 1C9E projected transform families can now be
-   replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex layouts, shader
-   constants, and shader transforms rather than primitive expansion alone. Use gap-only samples,
-   OBJ previews, and ucode dumps to keep that work bounded and visually inspectable.
+   dumps. Compatible triangle strips plus the D5, 1C9E, and 1B2E projected transform families can
+   now be replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex
+   layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
+   gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually
+   inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
    paths: additional Xenos formats, mip tails, arrays, swizzles, and render-target ownership.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare
