@@ -703,8 +703,23 @@
   frames with `native_supported=1390`, `native_projected=640`, and unsupported buckets down to
   `0/5/1/0/36`, then wrote
   `extracted\native_render_samples\native_ed8d_projected_standard_20260718-061536.bmp` using `1397`
-  captured D3D11 draws. The current repeated transform blocker is
-  `VS=0x6E10B025BC817893 / PS=0x1C9617B76D4A368A`, stride-10 attrs-5; the repeated layout blocker is
+  captured D3D11 draws.
+- The indexed stride-10 `VS=0x6E10B025BC817893 / PS=0x1C9617B76D4A368A` projection family is now
+  promoted as `supported_projected_transform` behind an exact five-attribute stage/building layout
+  gate (`fmt57@w0->t1i9`, `fmt6@w3->t1i1`, `fmt57@w4->t1i3`, `fmt6@w7->t1i2`,
+  `fmt37@w8->t1i1`). The layout-specific transform applies `c13..c15`, reorders the projected
+  source as `{z,x,y}`, projects through `c9..c12`, and treats `0x00FF` as a local strip separator
+  only for this exact layout. Focused validation `runtime.native-transform-probe-20260718-062457.log`
+  exited `0` and wrote a debug-fit BMP with coherent textured building/stage geometry. The unfit
+  validation `runtime.native-transform-probe-20260718-062613.log` also exited `0`, but its retained
+  NDC ranges are off the captured visible clip and the BMP is black, so the visual proof remains
+  diagnostic rather than final scene coverage. Standard validation
+  `runtime.native-6e10-projected-standard-20260718-062807.log` exited `0`, reported no
+  assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
+  `native_supported=1398`, `native_projected=648`, and unsupported buckets down to `0/5/1/0/28`,
+  then wrote `extracted\native_render_samples\native_6e10_projected_standard_20260718-062807.bmp`
+  using `1397` captured D3D11 draws. The current repeated transform blocker is
+  `VS=0x83BD204594EECAB8 / PS=0xD10452A3E31F9C61`, stride-12 attrs-6; the repeated layout blocker is
   `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path

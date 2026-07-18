@@ -132,8 +132,8 @@ scenario-specific stage metadata will surface.
    `0x823717B0`, `0x823727C0`, `0x8236D8F0`, and `0x8236D978` labeled, but treat them as render
    diagnostics unless a reachable gameplay-facing caller appears.
 10. Native-render draw families: keep naming shader/draw-family evidence from bounded probes,
-    especially the promoted D5, 1C9E, 1B2E, A395, 45C4, 6B72, and ED8D projection paths plus the
-    current `6E10B025BC817893 / 1C9617B76D4A368A` stride-10 attrs-5 transform blocker, the
+    especially the promoted D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, and 6E10 projection paths plus
+    the current `83BD204594EECAB8 / D10452A3E31F9C61` stride-12 attrs-6 transform blocker, the
     `5A550226A224F581 / 7703E4142DFBD4D4` stride-7 layout blocker, stride-8/9/10 layouts, and
     tiled/render target texture fetches. This supports native rendering and also helps correlate
     runtime meshes back to archive `G1M_` data.
@@ -144,6 +144,9 @@ scenario-specific stage metadata will surface.
   targeted IDA xrefs.
 - Add bounded runtime logs around the stage-loader chain to print selected stage id, entry triplet,
   loaded pointer, subfile count, and LR.
+- Keep using `0x82347750` caller LR plus archive entry ids as the main naming pass for loaders; it
+  is the cleanest way to connect menus, battles, weapons, characters, and stage assets to
+  `LINKDATA_BNS` entries.
 - For the Blender/map-editor path, decode runtime-confirmed stage metadata entry `2944` first. For
   campaign/table editing, decode entry `68` next; for equipment editing, decode `1578/1579`.
 - Build a friendly mod manifest format that can say "replace stage 2856 sub_0001" or "replace

@@ -1192,9 +1192,32 @@ The replay wrote
 `extracted\native_render_samples\native_ed8d_projected_standard_20260718-061536.bmp` using `1397`
 captured D3D11 draws.
 
+The indexed stride-10 `VS=0x6E10B025BC817893` / `PS=0x1C9617B76D4A368A` family is now promoted as
+`supported_projected_transform` behind an exact five-attribute stage/building layout gate: position
+`fmt57@w0->t1i9`, packed model index `fmt6@w3->t1i1`, normal-ish `fmt57@w4->t1i3`, packed material
+`fmt6@w7->t1i2`, and UV `fmt37@w8->t1i1`. The vertex shader fetches `r9.xyz1`, applies the
+model block through `c13..c15`, reorders the projected source as `{z,x,y}`, and projects through
+`c9..c12`. Saved samples use `0x00FF` strip separators in this family too, so strip expansion treats
+that value as an additional restart only for the exact 6E10 layout.
+
+Focused validation `runtime.native-transform-probe-20260718-062457.log` exited `0`, kept event JSON
+off, and wrote `extracted\native_render_samples\native_projected_gap_replay_20260718-062457.bmp`;
+the debug-fit BMP shows a coherent textured building/stage structure. The unfit validation
+`runtime.native-transform-probe-20260718-062613.log` also exited `0` and retained repeated 6E10
+draws with valid shader-model candidates, but the retained NDC ranges sit outside the captured
+visible clip, so its unfit BMP is black and should be treated as an offscreen geometry validation
+rather than visible scene coverage. Standard no-JSON validation
+`runtime.native-6e10-projected-standard-20260718-062807.log` exited `0`, reported no assertion,
+fatal, crash, exception, or native replay failure lines, and reached repeated gameplay frames with
+`native_supported=1398`, `native_tex=728`, `native_solid=12`, `native_depth=10`,
+`native_projected=648`, and `unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/28`.
+The replay wrote
+`extracted\native_render_samples\native_6e10_projected_standard_20260718-062807.bmp` using `1397`
+captured D3D11 draws.
+
 The next repeated transform blocker in the standard gameplay pass is
-`VS=0x6E10B025BC817893 / PS=0x1C9617B76D4A368A`, an indexed stride-10 attrs-5 family with
-`attr_sig=0x805AA22BE5C2ADEE`. The repeated layout blocker is still
+`VS=0x83BD204594EECAB8 / PS=0xD10452A3E31F9C61`, an indexed stride-12 attrs-6 family with
+`attr_sig=0x439E8335CADF0BD1`. The repeated layout blocker is still
 `VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
 indexed layout gap, five shape gaps, remaining transform families, and native render-target
 composition still block full native scene ownership.
@@ -1215,7 +1238,7 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, and ED8D projected transform families can
+   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, and 6E10 projected transform families can
    now be replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex
    layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
    gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually
