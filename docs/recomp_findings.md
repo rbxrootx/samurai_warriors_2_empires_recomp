@@ -672,9 +672,25 @@
   `native_supported=1366`, `native_projected=616`, and unsupported buckets down to `0/5/1/0/61`,
   then wrote `extracted\native_render_samples\native_45c4_projected_standard_20260718-054002.bmp`
   using `1397` captured D3D11 draws. The BMP is pixel-identical to the A395 standard diagnostic
-  frame, so the promotion improves coverage without adding visible artifacts. The current repeated
-  transform blocker is `VS=0x6B722207E8ECA2B6 / PS=0xD10452A3E31F9C61`, an indexed stride-9 attrs-4
-  family; the repeated layout blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+  frame, so the promotion improves coverage without adding visible artifacts.
+- The indexed stride-9 `VS=0x6B722207E8ECA2B6 / PS=0xD10452A3E31F9C61` projection family is now
+  promoted as `supported_projected_transform` behind an exact four-attribute layout gate
+  (`fmt57@w0->t1i6`, `fmt57@w3->t1i4`, `fmt6@w6->t1i1`, `fmt37@w7->t1i0`). Its ucode applies
+  `c15..c17` to raw position, reorders the skinned source as `{z,x,y}`, and projects through
+  `c11..c14`. The layout-specific decoder reads UV directly from words `7..8` because the shader
+  writes that fetch through `r0._xy_`, and strip expansion treats `0x00FF` as a local separator
+  only for this exact layout. Focused validations
+  `runtime.native-transform-probe-20260718-055958.log` and
+  `runtime.native-transform-probe-20260718-060209.log` exited `0`, kept event JSON off, and wrote
+  fit and unfit BMPs; the unfit replay shows narrow weapon/prop-like strips in real screen
+  positions. Standard validation `runtime.native-6b72-projected-standard-20260718-060328.log`
+  exited `0`, reported no assertion/fatal/crash/exception/native-replay-failure lines, reached
+  repeated gameplay frames with `native_supported=1382`, `native_projected=632`, and unsupported
+  buckets down to `0/5/1/0/44`, then wrote
+  `extracted\native_render_samples\native_6b72_projected_standard_20260718-060328.bmp` using
+  `1397` captured D3D11 draws. The current repeated transform blocker is now the shared
+  `VS=0xED8D12865D27DEBF / PS=0x7703E4142DFBD4D4` stride-12 attrs-4 family; the repeated layout
+  blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path
 

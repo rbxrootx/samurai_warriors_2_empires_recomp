@@ -41,7 +41,8 @@ References:
   D3D11 debug-fit output, including the first confirmed tiled `k_8_8_8_8` render-target texture
   fetch family, the repeated D5 stride-9 terrain/ground strip shader family, and the first
   promoted 1C9E/1B2E indexed stride-11 shared-skin projection families, the A395 indexed stride-10
-  single-skin projection family, and the strict 45C4 indexed stride-9 shared-skin projection family.
+  single-skin projection family, the strict 45C4 indexed stride-9 shared-skin projection family,
+  and the 6B72 indexed stride-9 model/weapon strip family.
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
@@ -177,7 +178,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   `A395C843676E6C8D / 850DBBBA56015D1A` stride-10 family is promoted through its single-palette
   `c[13+a0]..c[15+a0]` skin block and `c9..c12` projection block. The
   `45C4DDDAAA10F75F / 7703E4142DFBD4D4` stride-9 family is promoted behind an exact layout gate
-  for its shared `c4..c6` skin block and `c0..c3` projection block.
+  for its shared `c4..c6` skin block and `c0..c3` projection block. The
+  `6B722207E8ECA2B6 / D10452A3E31F9C61` stride-9 attrs-4 family is promoted through its exact
+  position/normal/packed/UV layout, direct `c15..c17` model block, and `c11..c14` projection block.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding

@@ -207,6 +207,7 @@ struct ProjectionCandidate {
   bool use_shared_shader_skin = false;
   bool use_1b2e_character_skin = false;
   bool use_a395_single_skin = false;
+  bool use_6b72_model_skin = false;
   uint32_t shared_shader_constant_base = 4;
   const char* source = "none";
   float finite_ratio = 0.0f;
@@ -331,6 +332,7 @@ constexpr float kNativeGpuReplayWidth = 1280.0f;
 constexpr float kNativeGpuReplayHeight = 720.0f;
 constexpr uint32_t kTextureTileWidthHeightBlocks = 32;
 constexpr uint32_t kTextureSubresourceAlignmentBytes = 4096;
+constexpr uint32_t kNativeReplayNoRestartOverride = std::numeric_limits<uint32_t>::max();
 
 uint64_t HashBytes(const uint8_t* data, uint32_t size) {
   uint64_t hash = kFnv1a64Offset;
@@ -409,7 +411,8 @@ bool IsNativeReplaySharedShaderSkinProjectionShader(uint64_t vertex_shader_hash)
          vertex_shader_hash == 0x45C4DDDAAA10F75Full ||
          vertex_shader_hash == 0x1C9E2812AEBDBE4Eull ||
          vertex_shader_hash == 0x1B2E9C6960B0C86Eull ||
-         vertex_shader_hash == 0xA395C843676E6C8Dull;
+         vertex_shader_hash == 0xA395C843676E6C8Dull ||
+         vertex_shader_hash == 0x6B722207E8ECA2B6ull;
 }
 
 uint32_t NativeReplayFloatFormatComponentCount(uint32_t data_format) {
@@ -526,6 +529,40 @@ const VertexAttributeSummary* FindNativeReplayTexcoordAttribute(const VertexFetc
   return nullptr;
 }
 
+bool IsNativeReplay6B72ModelVertexFetch(const VertexFetchSummary& fetch) {
+  const uint32_t attribute_count =
+      std::min(fetch.attribute_summary_count,
+               rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+  if (fetch.stride_words != 9 || attribute_count != 4) {
+    return false;
+  }
+
+  const VertexAttributeSummary& position_attribute = fetch.attributes[0];
+  const VertexAttributeSummary& normal_attribute = fetch.attributes[1];
+  const VertexAttributeSummary& packed_attribute = fetch.attributes[2];
+  const VertexAttributeSummary& texcoord_attribute = fetch.attributes[3];
+  return position_attribute.data_format == kXenosVertexFormat32_32_32Float &&
+         position_attribute.offset_words == 0 &&
+         position_attribute.result_storage_target == 1 &&
+         position_attribute.result_storage_index == 6 &&
+         position_attribute.result_swizzle == 2696 &&
+         normal_attribute.data_format == kXenosVertexFormat32_32_32Float &&
+         normal_attribute.offset_words == 3 &&
+         normal_attribute.result_storage_target == 1 &&
+         normal_attribute.result_storage_index == 4 &&
+         normal_attribute.result_swizzle == 2184 &&
+         packed_attribute.data_format == kXenosFormat8888 &&
+         packed_attribute.offset_words == 6 &&
+         packed_attribute.result_storage_target == 1 &&
+         packed_attribute.result_storage_index == 1 &&
+         packed_attribute.result_swizzle == 90 &&
+         texcoord_attribute.data_format == kXenosVertexFormat32_32Float &&
+         texcoord_attribute.offset_words == 7 &&
+         texcoord_attribute.result_storage_target == 1 &&
+         texcoord_attribute.result_storage_index == 0 &&
+         texcoord_attribute.result_swizzle == 2116;
+}
+
 bool CanDecodeNativeReplayTexturedVertexFetch(const VertexFetchSummary& fetch) {
   if (FindNativeReplayPositionAttribute(fetch) && FindNativeReplayTexcoordAttribute(fetch)) {
     return true;
@@ -540,6 +577,16 @@ bool IsNativeReplayScreenSpaceTexturedVertexFetch(const VertexFetchSummary& fetc
 bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_stride_bytes,
                                       const VertexFetchSummary& fetch,
                                       gpu_replay::ReplayVertex& replay_vertex) {
+  if (IsNativeReplay6B72ModelVertexFetch(fetch) && vertex_stride_bytes >= 36) {
+    replay_vertex.x = ReadF32(vertex + 0, fetch.endian);
+    replay_vertex.y = ReadF32(vertex + 4, fetch.endian);
+    replay_vertex.z = ReadF32(vertex + 8, fetch.endian);
+    replay_vertex.w = 1.0f;
+    replay_vertex.u = ReadF32(vertex + 28, fetch.endian);
+    replay_vertex.v = ReadF32(vertex + 32, fetch.endian);
+    return true;
+  }
+
   const VertexAttributeSummary* position_attribute = FindNativeReplayPositionAttribute(fetch);
   const VertexAttributeSummary* texcoord_attribute = FindNativeReplayTexcoordAttribute(fetch);
   if (position_attribute && texcoord_attribute) {
@@ -582,6 +629,11 @@ void DecodeNativeReplaySharedShaderSkinInputs(const uint8_t* vertex,
   replay_vertex.shared_shader_constant_offsets = {};
 
   if (vertex_shader_hash == 0x45C4DDDAAA10F75Full) {
+    replay_vertex.has_shared_shader_skin = true;
+    return;
+  }
+
+  if (vertex_shader_hash == 0x6B722207E8ECA2B6ull) {
     replay_vertex.has_shared_shader_skin = true;
     return;
   }
@@ -842,6 +894,46 @@ std::optional<std::array<float, 4>> EvaluateNativeReplayA395SingleSkinClip(
   return clip;
 }
 
+std::optional<std::array<float, 4>> EvaluateNativeReplay6B72ModelClip(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (!vertex.has_shared_shader_skin) {
+    return std::nullopt;
+  }
+
+  const uint32_t constant_offset = vertex.shared_shader_constant_offsets[0];
+  std::array<float, 3> skinned = {};
+  for (uint32_t row = 0; row < 3; ++row) {
+    const uint32_t constant_index = 15u + row + constant_offset;
+    if (constant_index >= projection.shared_shader_constant_present.size() ||
+        !projection.shared_shader_constant_present[constant_index]) {
+      return std::nullopt;
+    }
+    const auto& c = projection.shared_shader_constants[constant_index];
+    const float value = c[3] + vertex.z * c[2] + vertex.x * c[0] + vertex.y * c[1];
+    if (!std::isfinite(value)) {
+      return std::nullopt;
+    }
+    skinned[row] = value;
+  }
+
+  const std::array<float, 3> projected_source = {skinned[2], skinned[0], skinned[1]};
+  std::array<float, 4> clip = {};
+  for (uint32_t row = 0; row < 4; ++row) {
+    const uint32_t constant_index = 11u + row;
+    if (constant_index >= projection.shared_shader_constant_present.size() ||
+        !projection.shared_shader_constant_present[constant_index]) {
+      return std::nullopt;
+    }
+    const auto& c = projection.shared_shader_constants[constant_index];
+    clip[row] = projected_source[0] * c[2] + projected_source[1] * c[0] +
+                projected_source[2] * c[1] + c[3];
+    if (!std::isfinite(clip[row])) {
+      return std::nullopt;
+    }
+  }
+  return clip;
+}
+
 std::array<float, 4> TransformNativeReplayPositionWithCandidate(
     const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
   if (projection.use_1b2e_character_skin) {
@@ -857,6 +949,16 @@ std::array<float, 4> TransformNativeReplayPositionWithCandidate(
   if (projection.use_a395_single_skin) {
     const std::optional<std::array<float, 4>> clip =
         EvaluateNativeReplayA395SingleSkinClip(vertex, projection);
+    if (!clip) {
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      return {nan, nan, nan, nan};
+    }
+    return *clip;
+  }
+
+  if (projection.use_6b72_model_skin) {
+    const std::optional<std::array<float, 4>> clip =
+        EvaluateNativeReplay6B72ModelClip(vertex, projection);
     if (!clip) {
       const float nan = std::numeric_limits<float>::quiet_NaN();
       return {nan, nan, nan, nan};
@@ -1097,6 +1199,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   bool supports_shared_shader_skin = false;
   bool use_1b2e_character_skin = false;
   bool use_a395_single_skin = false;
+  bool use_6b72_model_skin = false;
   uint32_t shared_shader_constant_base = 4;
   const char* source = nullptr;
   switch (event.vertex_shader_hash) {
@@ -1126,6 +1229,14 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       shared_shader_constant_base = 13;
       source = include_shared_shader_skin ? "shader-skinned-c13-c15-c9-c12"
                                           : "shader-final-c9-c12";
+      break;
+    case 0x6B722207E8ECA2B6ull:
+      constants = {11, 12, 13, 14};
+      supports_shared_shader_skin = true;
+      use_6b72_model_skin = true;
+      shared_shader_constant_base = 15;
+      source = include_shared_shader_skin ? "shader-model-c15-c17-c11-c14"
+                                          : "shader-final-c11-c14";
       break;
     case 0x1A2E173CABDD3E80ull:
       constants = {3, 4, 5, 6};
@@ -1158,6 +1269,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   candidate.shared_shader_constant_base = shared_shader_constant_base;
   candidate.use_1b2e_character_skin = include_shared_shader_skin && use_1b2e_character_skin;
   candidate.use_a395_single_skin = include_shared_shader_skin && use_a395_single_skin;
+  candidate.use_6b72_model_skin = include_shared_shader_skin && use_6b72_model_skin;
   if (include_bone0_upstream &&
       !BuildNativeReplayBone0UpstreamRows(event, candidate.upstream_constant_indices,
                                           candidate.upstream_rows)) {
@@ -1418,7 +1530,13 @@ uint32_t SwapIndex32(uint32_t value, uint32_t endian) {
   }
 }
 
-bool IsNativeReplayRestartIndex(uint32_t index, uint32_t index_format) {
+bool IsNativeReplayRestartIndex(uint32_t index, uint32_t index_format,
+                                uint32_t restart_index_override =
+                                    kNativeReplayNoRestartOverride) {
+  if (restart_index_override != kNativeReplayNoRestartOverride &&
+      index == restart_index_override) {
+    return true;
+  }
   return index_format == 0 ? index == 0xFFFFu : index == 0x00FFFFFFu;
 }
 
@@ -1456,7 +1574,9 @@ bool DecodeNativeReplayIndices(const DrawEvent& event, const rex::memory::Memory
 
 bool ExpandNativeReplayTriangleStripIndices(const std::vector<uint32_t>& strip_indices,
                                             std::vector<uint32_t>& triangle_indices,
-                                            uint32_t index_format = 0) {
+                                            uint32_t index_format = 0,
+                                            uint32_t restart_index_override =
+                                                kNativeReplayNoRestartOverride) {
   triangle_indices.clear();
   if (strip_indices.size() < 3) {
     return false;
@@ -1466,7 +1586,7 @@ bool ExpandNativeReplayTriangleStripIndices(const std::vector<uint32_t>& strip_i
   size_t segment_start = 0;
   for (size_t i = 0; i <= strip_indices.size(); ++i) {
     if (i != strip_indices.size() &&
-        !IsNativeReplayRestartIndex(strip_indices[i], index_format)) {
+        !IsNativeReplayRestartIndex(strip_indices[i], index_format, restart_index_override)) {
       continue;
     }
 
@@ -1963,8 +2083,12 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0x45C4DDDAAA10F75Full &&
       event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
+  const bool model_stride9_projected =
+      event.vertex_shader_hash == 0x6B722207E8ECA2B6ull &&
+      event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
   if ((!d5_projected && !indexed_stride11_projected && !character_stride11_projected &&
-       !a395_stride10_projected && !indexed_stride9_projected) ||
+       !a395_stride10_projected && !indexed_stride9_projected && !model_stride9_projected) ||
       !HasNativeReplayColorOutput(event) ||
       event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
       HasVizQuerySideEffect(event) || !IsNativeReplayTexturedTriangleShape(event)) {
@@ -1999,6 +2123,9 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
         texcoord_attribute.result_storage_index != 2) {
       return false;
     }
+  }
+  if (model_stride9_projected && !IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)) {
+    return false;
   }
 
   std::optional<TextureDumpPlan> texture_plan;
@@ -2371,9 +2498,14 @@ class Sidecar final : public EventSink {
 
     if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
       std::vector<uint32_t> triangle_indices;
+      const uint32_t restart_index_override =
+          event.indexed && IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)
+              ? 0xFFu
+              : kNativeReplayNoRestartOverride;
       const bool expanded = event.indexed
                                 ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
-                                                                         event.index_format)
+                                                                         event.index_format,
+                                                                         restart_index_override)
                                 : BuildNativeReplayTriangleStripIndices(event, triangle_indices);
       if (!expanded) {
         native_gpu_replay_draw_keys_.erase(key);
@@ -2621,9 +2753,14 @@ class Sidecar final : public EventSink {
 
     if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
       std::vector<uint32_t> triangle_indices;
+      const uint32_t restart_index_override =
+          event.indexed && IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)
+              ? 0xFFu
+              : kNativeReplayNoRestartOverride;
       const bool expanded = event.indexed
                                 ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
-                                                                         event.index_format)
+                                                                         event.index_format,
+                                                                         restart_index_override)
                                 : BuildNativeReplayTriangleStripIndices(event, triangle_indices);
       if (!expanded) {
         native_gpu_replay_draw_keys_.erase(key);
