@@ -1291,9 +1291,20 @@ not a clean target vertex row. MSVC validation passed, and two post-patch no-JSO
 (`runtime.native-transform-probe-20260718-073258.log` and
 `runtime.native-transform-probe-20260718-073749.log`) ran without native-render asserts but did not
 reproduce the exact `2E01/D104` draw before the probe close. The repeated layout blocker is still
-`VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
-indexed layout gap, five shape gaps, remaining transform families, and native render-target
-composition still block full native scene ownership.
+`VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, formerly the repeated indexed stride-7 attrs-1
+layout blocker, is also now promoted behind exact layout
+`stride_words=7 attrs=1 attr_sig=0x9e400b94e9164690`
+(`fmt57@w0->t1i1m15u7s85`). The shader fetches position from words 0..2, uses generated
+`o0.xy=(0,0)` UV scaffolding, applies `c4..c6` upstream rows through the shared-skin evaluator, and
+projects through `c0..c3`. Focused validation
+`runtime.native-transform-probe-20260718-075241.log` exited `0`, queued repeated draw-25 projected
+replay draws (`12 vertices, 18 indices`), wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-075241.bmp`, and reported
+`LayoutGapCount=0`. The captured route is finite but fully outside the visible clip region
+(`inside=0.000`, NDC roughly `x=-3.79..-1.52`, `y=-12.16..-5.04`, `z=3.42..7.48`), so the BMP is
+black RGB with alpha only; this is a coverage/projection checkpoint, not a final visible render.
+The remaining shape gaps, transform families, and native render-target composition still block full
+native scene ownership.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
@@ -1312,8 +1323,8 @@ work should proceed in this order:
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
    dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD,
-   B21C, 3094, and 2E01 projected/effect families now have native replay paths; the remaining big
-   gameplay gaps are positive visual validation for 2E01, the stride-7 layout blocker, other
+   B21C, 3094, 2E01, and 5A projected/effect families now have native replay paths; the remaining
+   big gameplay gaps are positive visual validation for 2E01, visible-fit refinement for 5A, other
    stride-8/9/10/11 model vertex layouts, shader constants, and shader transforms rather than
    primitive expansion alone. Use gap-only samples, compact reject-layout logs, OBJ previews, and
    ucode dumps to keep that work bounded and visually inspectable.

@@ -769,8 +769,15 @@
   target vertex row. MSVC validation passed; post-patch no-JSON probes
   `runtime.native-transform-probe-20260718-073258.log` and
   `runtime.native-transform-probe-20260718-073749.log` ran without native-render asserts but did not
-  reproduce the exact `2E01/D104` draw. The repeated layout blocker is still
-  `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+  reproduce the exact `2E01/D104` draw.
+- The former repeated layout blocker `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4` is now mapped
+  behind its exact stride-7 attrs-1 layout (`attr_sig=0x9e400b94e9164690`) and reuses the shared
+  `c4..c6` upstream plus `c0..c3` projection path. Focused validation
+  `runtime.native-transform-probe-20260718-075241.log` exited `0`, queued repeated draw-25 projected
+  replay draws, wrote `native_projected_gap_replay_20260718-075241.bmp`, and reported
+  `LayoutGapCount=0`. The route is finite but offscreen (`inside=0.000`), and the replay BMP is
+  black RGB/alpha-only, so further work should refine visible fit and shader-generated UV/color
+  behavior rather than re-opening it as a layout blocker.
 - Projected transform reject logs now include compact vertex-fetch layout details (`vfetch_c`,
   stride, attribute signature, and the first four attributes) beside the rejection reason. The
   transform probe wrapper also skips malformed trailing `samples.jsonl` rows so a timed forced-close

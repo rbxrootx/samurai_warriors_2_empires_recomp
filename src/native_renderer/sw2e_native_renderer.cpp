@@ -414,6 +414,7 @@ float ReadF32(const uint8_t* data, uint32_t endian) {
 bool IsNativeReplaySharedShaderSkinProjectionShader(uint64_t vertex_shader_hash) {
   return vertex_shader_hash == 0xED8D12865D27DEBFull ||
          vertex_shader_hash == 0x45C4DDDAAA10F75Full ||
+         vertex_shader_hash == 0x5A550226A224F581ull ||
          vertex_shader_hash == 0x1C9E2812AEBDBE4Eull ||
          vertex_shader_hash == 0x1B2E9C6960B0C86Eull ||
          vertex_shader_hash == 0xA395C843676E6C8Dull ||
@@ -570,6 +571,24 @@ bool IsNativeReplay6B72ModelVertexFetch(const VertexFetchSummary& fetch) {
          texcoord_attribute.result_storage_target == 1 &&
          texcoord_attribute.result_storage_index == 0 &&
          texcoord_attribute.result_swizzle == 2116;
+}
+
+bool IsNativeReplay5A550226LayoutVertexFetch(const VertexFetchSummary& fetch) {
+  const uint32_t attribute_count =
+      std::min(fetch.attribute_summary_count,
+               rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+  if (fetch.stride_words != 7 || attribute_count != 1) {
+    return false;
+  }
+
+  const VertexAttributeSummary& position_attribute = fetch.attributes[0];
+  return position_attribute.data_format == kXenosVertexFormat32_32_32Float &&
+         position_attribute.offset_words == 0 &&
+         position_attribute.result_storage_target == 1 &&
+         position_attribute.result_storage_index == 1 &&
+         position_attribute.result_write_mask == 15 &&
+         position_attribute.result_used_components == 7 &&
+         position_attribute.result_swizzle == 85;
 }
 
 bool IsNativeReplay2E01ModelVertexFetch(const VertexFetchSummary& fetch) {
@@ -783,6 +802,9 @@ bool IsNativeReplay3094EffectVertexFetch(const VertexFetchSummary& fetch) {
 }
 
 bool CanDecodeNativeReplayTexturedVertexFetch(const VertexFetchSummary& fetch) {
+  if (IsNativeReplay5A550226LayoutVertexFetch(fetch)) {
+    return true;
+  }
   if (IsNativeReplay2E01ModelVertexFetch(fetch)) {
     return true;
   }
@@ -836,6 +858,16 @@ bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_str
     replay_vertex.w = 1.0f;
     replay_vertex.u = ReadF32(vertex + 28, fetch.endian);
     replay_vertex.v = ReadF32(vertex + 32, fetch.endian);
+    return true;
+  }
+
+  if (IsNativeReplay5A550226LayoutVertexFetch(fetch) && vertex_stride_bytes >= 28) {
+    replay_vertex.x = ReadF32(vertex + 0, fetch.endian);
+    replay_vertex.y = ReadF32(vertex + 4, fetch.endian);
+    replay_vertex.z = ReadF32(vertex + 8, fetch.endian);
+    replay_vertex.w = 1.0f;
+    replay_vertex.u = 0.0f;
+    replay_vertex.v = 0.0f;
     return true;
   }
 
@@ -893,6 +925,11 @@ void DecodeNativeReplaySharedShaderSkinInputs(const uint8_t* vertex,
   replay_vertex.shared_shader_constant_offsets = {};
 
   if (vertex_shader_hash == 0x45C4DDDAAA10F75Full) {
+    replay_vertex.has_shared_shader_skin = true;
+    return;
+  }
+
+  if (vertex_shader_hash == 0x5A550226A224F581ull) {
     replay_vertex.has_shared_shader_skin = true;
     return;
   }
@@ -1725,6 +1762,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       break;
     case 0xED8D12865D27DEBFull:
     case 0x45C4DDDAAA10F75Full:
+    case 0x5A550226A224F581ull:
     case 0x1C9E2812AEBDBE4Eull:
       constants = {0, 1, 2, 3};
       negate_y_row = true;
@@ -1840,6 +1878,10 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   candidate.use_shared_shader_skin = include_shared_shader_skin;
   candidate = ScoreNativeReplayProjectionCandidate(candidate, vertices);
   if (!candidate.valid && event.vertex_shader_hash == 0xD5CCD0C915DDCC0Bull &&
+      candidate.finite_ratio >= 0.5f) {
+    candidate.valid = true;
+  }
+  if (!candidate.valid && event.vertex_shader_hash == 0x5A550226A224F581ull &&
       candidate.finite_ratio >= 0.5f) {
     candidate.valid = true;
   }
@@ -2672,6 +2714,10 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0x45C4DDDAAA10F75Full &&
       event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
+  const bool indexed_stride7_layout_projected =
+      event.vertex_shader_hash == 0x5A550226A224F581ull &&
+      event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
   const bool model_stride9_projected =
       event.vertex_shader_hash == 0x6B722207E8ECA2B6ull &&
       event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
@@ -2684,8 +2730,8 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
        !model_stride10_projected && !weighted_model_stride12_projected &&
        !b21c_stride10_projected && !effect_quad_3094_projected &&
        !character_stride11_projected &&
-       !a395_stride10_projected && !indexed_stride9_projected && !model_stride9_projected &&
-       !model_stride7_projected) ||
+       !a395_stride10_projected && !indexed_stride9_projected &&
+       !indexed_stride7_layout_projected && !model_stride9_projected && !model_stride7_projected) ||
       !HasNativeReplayColorOutput(event) ||
       event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
       HasVizQuerySideEffect(event) || !IsNativeReplayTexturedTriangleShape(event)) {
@@ -2735,6 +2781,9 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
         texcoord_attribute.result_storage_index != 2) {
       return false;
     }
+  }
+  if (indexed_stride7_layout_projected && !IsNativeReplay5A550226LayoutVertexFetch(*vertex_fetch)) {
+    return false;
   }
   if (model_stride9_projected && !IsNativeReplay6B72ModelVertexFetch(*vertex_fetch)) {
     return false;
@@ -3447,6 +3496,19 @@ class Sidecar final : public EventSink {
     const ProjectionCandidate projection =
         FindNativeReplayProjectionCandidate(event, replay_draw.vertices);
     if (!projection.valid) {
+      if (native_gpu_replay_projected_reject_log_count_ <
+          kNativeGpuReplayProjectedRejectLogLimit) {
+        REXLOG_INFO(
+            "SW2E projected transform gap projection candidate failed frame {} draw {} "
+            "constants=c{},c{},c{},c{} source={} finite={:.3f} inside={:.3f} "
+            "ndc=({:.4f},{:.4f},{:.4f})..({:.4f},{:.4f},{:.4f}) score={:.3f}",
+            event.frame_index, event.draw_index, projection.constant_indices[0],
+            projection.constant_indices[1], projection.constant_indices[2],
+            projection.constant_indices[3], projection.source, projection.finite_ratio,
+            projection.inside_ratio, projection.ndc_mins[0], projection.ndc_mins[1],
+            projection.ndc_mins[2], projection.ndc_maxs[0], projection.ndc_maxs[1],
+            projection.ndc_maxs[2], projection.score);
+      }
       native_gpu_replay_draw_keys_.erase(key);
       return RejectNativeGpuReplayProjectedTransformGap(event, "projection", replay_support);
     }

@@ -201,6 +201,10 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   exact position/vector/packed fetch layout and the same `c15+a0..c17+a0` plus `c11..c14` model
   projection shape as the 6B72 shader. UV/color handling is still conservative because the post-patch
   no-JSON repro runs missed the exact draw.
+  The `5A550226A224F581 / 7703E4142DFBD4D4` indexed stride-7 attrs-1 family is also mapped as an
+  exact layout with `c4..c6` upstream rows and `c0..c3` projection rows. Focused validation queues it
+  and writes a replay BMP, but the sampled route is offscreen/black RGB, so this is a coverage
+  checkpoint rather than final visual fidelity.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
@@ -213,9 +217,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Reproduce and visually validate the promoted
-  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61` path, then continue through stride-7/8/9/10
-  vertex layouts, indexed triangle strips, shader constants, and shader transforms.
+- Reproduce and visually validate the promoted `2E01/D104` path, then refine the promoted
+  `5A/7703` offscreen projection and continue through stride-7/8/9/10 vertex layouts, indexed
+  triangle strips, shader constants, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.
