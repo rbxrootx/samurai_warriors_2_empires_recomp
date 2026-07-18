@@ -197,6 +197,10 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   and `c9..c12` projection block. The `3094A52CE2571823 / 969CA710A35A4251` non-indexed stride-8
   attrs-2 effect/post quad is mapped through exact position/UV fetches and the shader's
   `x=2*(x+c0.x)+c255.x`, `y=-2*(y+c0.y)+c255.y`, `z=z`, `w=w` projection formula.
+  The `2E01DF902B14A323 / D10452A3E31F9C61` indexed stride-7 attrs-3 family is now mapped behind its
+  exact position/vector/packed fetch layout and the same `c15+a0..c17+a0` plus `c11..c14` model
+  projection shape as the 6B72 shader. UV/color handling is still conservative because the post-patch
+  no-JSON repro runs missed the exact draw.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
@@ -209,9 +213,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Map the next indexed transform blocker
-  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, then continue through stride-7/8/9/10 vertex
-  layouts, indexed triangle strips, shader constants, and shader transforms.
+- Reproduce and visually validate the promoted
+  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61` path, then continue through stride-7/8/9/10
+  vertex layouts, indexed triangle strips, shader constants, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.

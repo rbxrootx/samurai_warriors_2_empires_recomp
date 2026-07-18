@@ -132,11 +132,28 @@ scenario-specific stage metadata will surface.
    `0x823717B0`, `0x823727C0`, `0x8236D8F0`, and `0x8236D978` labeled, but treat them as render
    diagnostics unless a reachable gameplay-facing caller appears.
 10. Native-render draw families: keep naming shader/draw-family evidence from bounded probes,
-    especially the promoted D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD, B21C, and 3094
-    projection/effect paths plus the current `2E01DF902B14A323 / D10452A3E31F9C61` indexed
-    transform lead, the `5A550226A224F581 / 7703E4142DFBD4D4` stride-7 layout blocker,
+    especially the promoted D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD, B21C, 3094, and
+    2E01 projection/effect paths plus the `5A550226A224F581 / 7703E4142DFBD4D4` stride-7 layout blocker,
     stride-8/9/10 layouts, and tiled/render target texture fetches. This supports native rendering
     and also helps correlate runtime meshes back to archive `G1M_` data.
+
+## Debug Tooling Survey Notes
+
+A read-only repo survey on 2026-07-18 did not find a confirmed reachable gameplay debug menu. Most
+debug-menu/free-camera/stage-select style strings are stale or asset/dialogue leads until a caller is
+found. The strongest surviving developer surfaces are still runtime hooks and render diagnostics:
+
+- `DbgPrint` mirroring in `src/hooks/runtime_hooks.cpp` remains the best low-risk guest diagnostic
+  feed.
+- `0x8236BBF8` parses the single-letter PIX/render command cluster (`a/c/d/f/g/m/p/t/x`); keep
+  logging command and response buffers but do not inject commands until caller/registration flow is
+  mapped.
+- `0x82347750` archive asset load wrapper is the best draw/menu/asset correlation point because it
+  logs selector, entry, output magic, and LR.
+- Stage-loader hook candidates for the Blender/map-editor path remain `0x8227AE00`, `0x8227AAB0`,
+  `0x82286D10`, `0x82286B30`, `0x82286950`, and `0x822869D8`.
+- LZP2 identity hooks `0x8210D9F8` and `0x82116600` should connect compressed archive entries to
+  decompressed payloads and loose/mod override targets.
 
 ## Recommended Next Work
 

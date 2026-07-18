@@ -1280,11 +1280,17 @@ route, but the exact decoder/projection path now exists for the next time the fa
 
 The latest capped blocker pass also exposed an indexed transform lead:
 `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, primitive `triangle_strip`, `index_count=18`,
-texture `c0`, and D104 alpha/color modulation. The vertex ucode fetches a palette/index byte,
-`r6.xyz1` from offset 0, another vector at offset 3, and packed data at offset 6, then applies
-`c15+a0..c17+a0` model rows and projects through `c11..c14`. A focused run with the new compact
-reject-layout logging did not reproduce the pair before the probe deadline, so the exact vertex
-layout still needs one clean layout hit before promotion. The repeated layout blocker is still
+texture `c0`, and D104 alpha/color modulation. The vertex ucode fetches `r6.xyz1` from offset 0,
+another vector at offset 3, and packed data at offset 6, then applies `c15+a0..c17+a0` model rows
+and projects through `c11..c14`. That family is now promoted behind the exact compact layout
+`stride_words=7 attrs=3 attr_sig=0xe5158a04df6b7bd3`
+(`fmt57@w0->t1i6m15u7s2696`, `fmt57@w3->t1i4m7u7s2184`,
+`fmt6@w6->t1i1m15u15s90`) and reuses the proven 6B72 model projection path. The initial UV/color
+decode is deliberately conservative because the capped sample only captured the target texture row,
+not a clean target vertex row. MSVC validation passed, and two post-patch no-JSON probes
+(`runtime.native-transform-probe-20260718-073258.log` and
+`runtime.native-transform-probe-20260718-073749.log`) ran without native-render asserts but did not
+reproduce the exact `2E01/D104` draw before the probe close. The repeated layout blocker is still
 `VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
 indexed layout gap, five shape gaps, remaining transform families, and native render-target
 composition still block full native scene ownership.
@@ -1306,11 +1312,11 @@ work should proceed in this order:
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
    dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD,
-   B21C, and 3094 projected/effect families now have native replay paths; the remaining big gameplay
-   gap is the `2E01DF902B14A323 / D10452A3E31F9C61` indexed transform family, the stride-7 layout
-   blocker, other stride-8/9/10/11 model vertex layouts, shader constants, and shader transforms
-   rather than primitive expansion alone. Use gap-only samples, compact reject-layout logs, OBJ
-   previews, and ucode dumps to keep that work bounded and visually inspectable.
+   B21C, 3094, and 2E01 projected/effect families now have native replay paths; the remaining big
+   gameplay gaps are positive visual validation for 2E01, the stride-7 layout blocker, other
+   stride-8/9/10/11 model vertex layouts, shader constants, and shader transforms rather than
+   primitive expansion alone. Use gap-only samples, compact reject-layout logs, OBJ previews, and
+   ucode dumps to keep that work bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
    paths: additional Xenos formats, mip tails, arrays, swizzles, and render-target ownership.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare

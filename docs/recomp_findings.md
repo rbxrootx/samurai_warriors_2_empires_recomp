@@ -761,11 +761,16 @@
   `runtime.native-transform-probe-20260718-065854.log` shader/sample pass; later no-JSON runs did
   not hit that pair again on the same route, so this is a mapped replay path awaiting its next live
   appearance rather than a fresh standard-counter reduction.
-- The next observed indexed transform lead is
-  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, an indexed strip with `index_count=18` and
-  texture `c0`. Its vertex shader uses `c15+a0..c17+a0` model rows and `c11..c14` projection rows,
-  but the exact vertex-fetch layout still needs one clean compact reject-layout hit before promotion.
-  The repeated layout blocker is still `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+- The indexed transform lead `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61` is now mapped behind
+  its exact compact stride-7 attrs-3 layout (`attr_sig=0xe5158a04df6b7bd3`) and uses the same
+  `c15+a0..c17+a0` model rows plus `c11..c14` projection rows as the 6B72 family. The current
+  decode reads position from words 0..2, treats word 6 as packed data, and uses a conservative
+  packed-byte UV fallback because the capped sample captured target constants/texture but not a clean
+  target vertex row. MSVC validation passed; post-patch no-JSON probes
+  `runtime.native-transform-probe-20260718-073258.log` and
+  `runtime.native-transform-probe-20260718-073749.log` ran without native-render asserts but did not
+  reproduce the exact `2E01/D104` draw. The repeated layout blocker is still
+  `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 - Projected transform reject logs now include compact vertex-fetch layout details (`vfetch_c`,
   stride, attribute signature, and the first four attributes) beside the rejection reason. The
   transform probe wrapper also skips malformed trailing `samples.jsonl` rows so a timed forced-close
