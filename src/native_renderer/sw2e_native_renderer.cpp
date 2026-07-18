@@ -104,6 +104,21 @@ struct ShaderPairCounter {
   uint32_t draws = 0;
 };
 
+struct TransformGapCounter {
+  uint64_t vertex_hash = 0;
+  uint64_t pixel_hash = 0;
+  uint32_t primitive_type = 0;
+  bool indexed = false;
+  uint32_t fetch_constant = 0;
+  uint32_t stride_words = 0;
+  uint32_t attribute_count = 0;
+  uint32_t texture_fetch_count = 0;
+  uint32_t first_texture_format = 0;
+  uint32_t first_texture_dimension = 0;
+  uint32_t first_texture_tiled = 0;
+  uint32_t draws = 0;
+};
+
 struct FrameStats {
   uint32_t frame_index = 0;
   uint32_t draws = 0;
@@ -144,6 +159,8 @@ struct FrameStats {
   uint64_t texture_memory_hash = 0;
   uint64_t index_memory_hash = 0;
   std::array<ShaderPairCounter, 16> shader_pairs = {};
+  std::array<TransformGapCounter, 8> transform_gaps = {};
+  uint32_t other_transform_gap_draws = 0;
 };
 
 void ResetFrame(FrameStats& stats, uint32_t frame_index) {
@@ -662,15 +679,15 @@ const VertexFetchSummary* FindNativeReplayTexturedVertexFetch(const DrawEvent& e
   return nullptr;
 }
 
-bool HasDecodableNativeReplayTexturedVertexFetch(const DrawEvent& event) {
+const VertexFetchSummary* FindDecodableNativeReplayTexturedVertexFetch(const DrawEvent& event) {
   for (uint32_t i = 0; i < event.vertex_fetch_summary_count; ++i) {
     const auto& candidate = event.vertex_fetches[i];
     if (CanDecodeNativeReplayTexturedVertexFetch(candidate) &&
         (event.indexed || candidate.size_bytes >= event.index_count * candidate.stride_words * 4)) {
-      return true;
+      return &candidate;
     }
   }
-  return false;
+  return nullptr;
 }
 
 bool IsNativeReplayTexturedTriangleShape(const DrawEvent& event) {
@@ -756,7 +773,7 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
   }
   if (IsNativeReplayTexturedTriangleShape(event)) {
     if (!FindNativeReplayTexturedVertexFetch(event)) {
-      if (HasDecodableNativeReplayTexturedVertexFetch(event)) {
+      if (FindDecodableNativeReplayTexturedVertexFetch(event)) {
         return NativeReplaySupport::kUnsupportedTransform;
       }
       return NativeReplaySupport::kUnsupportedLayout;
@@ -873,7 +890,8 @@ class Sidecar final : public EventSink {
         no_output_skip_candidate && event.primitive_type == 1 ? 1 : 0;
     stats_.rasterized_no_output_draws +=
         no_output_skip_candidate && event.rasterization_potentially_done ? 1 : 0;
-    switch (ClassifyNativeReplaySupport(event)) {
+    const NativeReplaySupport replay_support = ClassifyNativeReplaySupport(event);
+    switch (replay_support) {
       case NativeReplaySupport::kSupportedTextured:
         ++stats_.native_replay_supported_draws;
         ++stats_.native_replay_supported_textured_draws;
@@ -907,6 +925,9 @@ class Sidecar final : public EventSink {
         break;
       case NativeReplaySupport::kNoOutputSkipCandidate:
         break;
+    }
+    if (replay_support == NativeReplaySupport::kUnsupportedTransform) {
+      CountTransformGap(event);
     }
     stats_.vertex_fetch_count += event.vertex_fetch_summary_count;
     stats_.texture_fetch_count += event.texture_fetch_summary_count;
@@ -1287,6 +1308,51 @@ class Sidecar final : public EventSink {
     ++stats_.other_shader_pair_draws;
   }
 
+  void CountTransformGap(const DrawEvent& event) {
+    const VertexFetchSummary* fetch = FindDecodableNativeReplayTexturedVertexFetch(event);
+    if (!fetch) {
+      return;
+    }
+
+    const TextureFetchSummary* texture =
+        event.texture_fetch_summary_count != 0 ? &event.texture_fetches[0] : nullptr;
+    TransformGapCounter* empty_slot = nullptr;
+    for (auto& gap : stats_.transform_gaps) {
+      if (gap.draws != 0 && gap.vertex_hash == event.vertex_shader_hash &&
+          gap.pixel_hash == event.pixel_shader_hash && gap.primitive_type == event.primitive_type &&
+          gap.indexed == event.indexed && gap.fetch_constant == fetch->fetch_constant &&
+          gap.stride_words == fetch->stride_words && gap.attribute_count == fetch->attribute_count &&
+          gap.texture_fetch_count == event.texture_fetch_summary_count &&
+          gap.first_texture_format == (texture ? texture->format : 0) &&
+          gap.first_texture_dimension == (texture ? texture->dimension : 0) &&
+          gap.first_texture_tiled == (texture ? texture->tiled : 0)) {
+        ++gap.draws;
+        return;
+      }
+      if (gap.draws == 0 && !empty_slot) {
+        empty_slot = &gap;
+      }
+    }
+
+    if (empty_slot) {
+      empty_slot->vertex_hash = event.vertex_shader_hash;
+      empty_slot->pixel_hash = event.pixel_shader_hash;
+      empty_slot->primitive_type = event.primitive_type;
+      empty_slot->indexed = event.indexed;
+      empty_slot->fetch_constant = fetch->fetch_constant;
+      empty_slot->stride_words = fetch->stride_words;
+      empty_slot->attribute_count = fetch->attribute_count;
+      empty_slot->texture_fetch_count = event.texture_fetch_summary_count;
+      empty_slot->first_texture_format = texture ? texture->format : 0;
+      empty_slot->first_texture_dimension = texture ? texture->dimension : 0;
+      empty_slot->first_texture_tiled = texture ? texture->tiled : 0;
+      empty_slot->draws = 1;
+      return;
+    }
+
+    ++stats_.other_transform_gap_draws;
+  }
+
   void HashGuestMemorySamples(const DrawEvent& event, const DrawEventContext& context) {
     if (!REXCVAR_GET(sw2e_native_renderer_hash_memory) || !context.memory) {
       return;
@@ -1561,6 +1627,35 @@ class Sidecar final : public EventSink {
     return top;
   }
 
+  const TransformGapCounter* TopTransformGap() const {
+    const TransformGapCounter* top = nullptr;
+    for (const auto& gap : stats_.transform_gaps) {
+      if (gap.draws == 0) {
+        continue;
+      }
+      if (!top || gap.draws > top->draws) {
+        top = &gap;
+      }
+    }
+    return top;
+  }
+
+  void LogTopTransformGap(const SwapEvent& event) const {
+    const TransformGapCounter* gap = TopTransformGap();
+    if (!gap) {
+      return;
+    }
+
+    REXLOG_INFO(
+        "SW2E native transform gap frame {}: draws={} other={} prim={} indexed={} "
+        "VS={:#018x} PS={:#018x} vfetch_c={} stride_words={} attrs={} "
+        "tfetches={} tex0_format={} tex0_dim={} tex0_tiled={}",
+        event.frame_index, gap->draws, stats_.other_transform_gap_draws, gap->primitive_type,
+        gap->indexed, gap->vertex_hash, gap->pixel_hash, gap->fetch_constant,
+        gap->stride_words, gap->attribute_count, gap->texture_fetch_count,
+        gap->first_texture_format, gap->first_texture_dimension, gap->first_texture_tiled);
+  }
+
   void LogFrame(const SwapEvent& event) const {
     const ShaderPairCounter* top = TopShaderPair();
     const uint32_t min_fetch =
@@ -1600,6 +1695,7 @@ class Sidecar final : public EventSink {
           stats_.hashed_texture_fetches, stats_.hashed_index_buffers, stats_.vertex_sample_bytes,
           stats_.texture_sample_bytes, stats_.index_sample_bytes,
           top->vertex_hash, top->pixel_hash, top->draws, stats_.other_shader_pair_draws);
+      LogTopTransformGap(event);
       return;
     }
 
@@ -1633,6 +1729,7 @@ class Sidecar final : public EventSink {
         stats_.texture_memory_hash, stats_.index_memory_hash, stats_.hashed_vertex_fetches,
         stats_.hashed_texture_fetches, stats_.hashed_index_buffers, stats_.vertex_sample_bytes,
         stats_.texture_sample_bytes, stats_.index_sample_bytes);
+    LogTopTransformGap(event);
   }
 
   uint32_t swap_count_ = 0;

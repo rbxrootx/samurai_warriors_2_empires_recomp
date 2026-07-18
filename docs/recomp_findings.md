@@ -320,6 +320,18 @@
   (`1280x720`, mean `0.675269`). A summary pass over the existing title coverage capture still
   reports the expected title buckets (`343` supported textured, `140` supported solid) and now names
   the `triangle_strip` primitive family explicitly.
+- Live frame summaries now keep a bounded top transform-gap bucket for the next gameplay capture.
+  When a frame contains textured draws that have decodable position/UV attributes but are not safe for
+  the current screen-space replay, the sidecar emits one extra `SW2E native transform gap` line with
+  draw count, primitive type, indexed flag, vertex/pixel shader hashes, vertex fetch constant,
+  stride, attribute count, texture count, and first texture format/dimension/tiling. This is designed
+  to point directly at the next shader-transform/material family without enabling the multi-GB JSON
+  stream. Validation `runtime.lean-native-smoke-20260717-234514.log` rebuilt cleanly, exited with
+  code `0`, kept `native_render_events=false`, created no default `native_render_events.jsonl`, and
+  wrote the nonblank title-screen BMP
+  `out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_transform_topgap_20260717-234514.bmp`
+  (`1280x720`, mean `0.675269`). The title path has no transform gaps, so no extra transform-gap
+  line was emitted there; the new line should appear only on frames that actually hit that gap.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

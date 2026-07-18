@@ -610,6 +610,18 @@ title-screen BMP
 (`1280x720`, mean `0.675269`). Re-summarizing the existing title coverage capture still reports the
 expected `343` supported textured and `140` supported solid buckets.
 
+The sidecar now records a bounded top transform-gap family per logged frame. When gameplay hits
+`unsupported_textured_transform`, the live log will add one concise `SW2E native transform gap` line
+with primitive/indexed state, shader pair, vertex fetch constant, stride, attribute count, texture
+count, and first texture format/dimension/tiling. This keeps the next battle capture actionable
+without turning on the large JSON event stream. Validation
+`runtime.lean-native-smoke-20260717-234514.log` rebuilt cleanly, exited with code `0`, kept
+`native_render_events=false`, created no default `native_render_events.jsonl`, and wrote the nonblank
+title-screen BMP
+`out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_transform_topgap_20260717-234514.bmp`
+(`1280x720`, mean `0.675269`). The title path has no transform gaps, so the extra line stayed quiet
+there.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
