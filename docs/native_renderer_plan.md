@@ -984,6 +984,17 @@ vertex color/alpha. DE7 captures also have a dedicated texture-lerp pixel mode t
 `c0` and a per-vertex factor into the D3D11 replay; the current DE7 capture uses the observed
 factor-`1` path, so the remaining exactness work is recovering the shader branch/`c20` factor path.
 
+Post-change smoke `runtime.native-standard-replay-20260718-033713.log` ran for 30 seconds with
+audio muted, `native_render_events=false`, no sample dumps, standard GPU replay enabled, and the
+window mover targeting the nonprimary monitor. The process was closed by the probe and exited `0`.
+It wrote `extracted\native_render_samples\native_standard_replay_20260718-033713.bmp` using `64`
+captured D3D11 draws; a `24px` grid sanity check over the `1280x720` BMP found `392/1620` nonblack
+samples. The same run retained DE7 draws such as `VS=0xde7f9af93c668314 /
+PS=0x8cbad34fce165328`, `stride_words=1`, `vertices=4`, `indices=6`, `texture=32x32`, and the
+gameplay summary again reached `native_supported=740`, `native_tex=728`, `native_solid=12`. The
+compatibility backend still emits non-fatal resolve errors like `k_1_REVERSE` and an occasional
+surface-pitch resolve warning, so native render ownership is not complete yet.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the

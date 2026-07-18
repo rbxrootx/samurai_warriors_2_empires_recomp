@@ -566,6 +566,16 @@
   DE7 draws use a texture-lerp pixel mode carrying pixel `c0` plus a per-vertex factor. Current DE7
   capture uses the observed factor-`1` path; exact shader branch/`c20` factor recovery remains a
   follow-up.
+- Post-change standard replay smoke `runtime.native-standard-replay-20260718-033713.log` ran
+  30 seconds with audio muted, `native_render_events=false`, no sample dumps, standard GPU replay
+  enabled, and nonprimary-window placement. The probe closed the process cleanly with exit `0` and
+  wrote `extracted\native_render_samples\native_standard_replay_20260718-033713.bmp` from `64`
+  captured D3D11 draws. A sampled `24px` grid over the `1280x720` BMP found `392/1620` nonblack
+  samples. The run retained DE7 draws with `stride_words=1`, `vertices=4`, `indices=6`,
+  `texture=32x32`, and repeated the gameplay summary `native_supported=740`, `native_tex=728`,
+  `native_solid=12`. Remaining backend messages include non-fatal `k_1_REVERSE` resolve errors and
+  a surface-pitch resolve warning; those are compatibility-backend issues to eliminate as native
+  ownership grows.
 
 ## Save And Storage Path
 
