@@ -1215,9 +1215,34 @@ The replay wrote
 `extracted\native_render_samples\native_6e10_projected_standard_20260718-062807.bmp` using `1397`
 captured D3D11 draws.
 
+The indexed stride-12 `VS=0x83BD204594EECAB8` / `PS=0xD10452A3E31F9C61` family is now promoted as
+`supported_projected_transform` behind an exact six-attribute weighted officer/character layout
+gate: position `fmt57@w0->t1i8`, weights `fmt37@w3->t1i5`, packed skin indices
+`fmt6@w5->t1i1`, normal-ish `fmt57@w6->t1i7`, packed material `fmt6@w9->t1i2`, and UV
+`fmt37@w10->t1i3`. The vertex shader fetches the two explicit weights, derives the third weight as
+`1.0 - w0 - w1`, blends the three `c15..c17` model/skin row groups selected from the packed index
+bytes, reorders the projected source as `{z,x,y}`, and projects through `c11..c14`. Saved index
+samples use `0x00FF` strip separators, so strip expansion treats that value as an additional restart
+only for the exact 83BD layout.
+
+Bounded shader/sample validation `runtime.native-transform-probe-20260718-063146.log` exited `0`,
+kept event JSON off, and wrote only 32 capped native samples plus 180 shader dumps. Focused
+validation `runtime.native-transform-probe-20260718-063554.log` exited `0` and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-063554.bmp`; the debug-fit BMP
+shows a coherent textured character/officer mesh. The unfit validation
+`runtime.native-transform-probe-20260718-063710.log` also exited `0`, retained visible in-clip 83BD
+draws, and wrote `extracted\native_render_samples\native_projected_gap_replay_20260718-063710.bmp`.
+Standard no-JSON validation `runtime.native-83bd-projected-standard-20260718-064107.log` exited `0`,
+reported no assertion, fatal, crash, exception, or native replay failure lines, and reached repeated
+gameplay frames with `native_supported=1406..1407`, `native_tex=728`, `native_solid=12`,
+`native_depth=10`, `native_projected=656..657`, and
+`unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/20`. The replay wrote
+`extracted\native_render_samples\native_83bd_projected_standard_20260718-064107.bmp` using `1397`
+captured D3D11 draws.
+
 The next repeated transform blocker in the standard gameplay pass is
-`VS=0x83BD204594EECAB8 / PS=0xD10452A3E31F9C61`, an indexed stride-12 attrs-6 family with
-`attr_sig=0x439E8335CADF0BD1`. The repeated layout blocker is still
+`VS=0xB21C8D7A8DB9B17A / PS=0x270B573E744D1ACB`, an indexed stride-10 attrs-5 family with
+`attr_sig=0x595D5ABE4C6C64B4`. The repeated layout blocker is still
 `VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
 indexed layout gap, five shape gaps, remaining transform families, and native render-target
 composition still block full native scene ownership.
@@ -1238,9 +1263,10 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, and 6E10 projected transform families can
-   now be replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex
-   layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
+   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, and
+   83BD projected transform families can now be replayed; the remaining big gameplay gap is
+   decoding the B21C stride-10 family, the stride-7 layout blocker, other stride-8/9/10/11 model
+   vertex layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
    gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually
    inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`

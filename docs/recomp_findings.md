@@ -718,8 +718,26 @@
   assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
   `native_supported=1398`, `native_projected=648`, and unsupported buckets down to `0/5/1/0/28`,
   then wrote `extracted\native_render_samples\native_6e10_projected_standard_20260718-062807.bmp`
-  using `1397` captured D3D11 draws. The current repeated transform blocker is
-  `VS=0x83BD204594EECAB8 / PS=0xD10452A3E31F9C61`, stride-12 attrs-6; the repeated layout blocker is
+  using `1397` captured D3D11 draws.
+- The indexed stride-12 `VS=0x83BD204594EECAB8 / PS=0xD10452A3E31F9C61` projection family is now
+  promoted as `supported_projected_transform` behind an exact six-attribute weighted
+  officer/character layout gate (`fmt57@w0->t1i8`, `fmt37@w3->t1i5`, `fmt6@w5->t1i1`,
+  `fmt57@w6->t1i7`, `fmt6@w9->t1i2`, `fmt37@w10->t1i3`). The layout-specific transform uses two
+  explicit weights plus the implicit third weight, selects three `c15..c17` model/skin row groups
+  from the packed index bytes, reorders the projected source as `{z,x,y}`, projects through
+  `c11..c14`, and treats `0x00FF` as a local strip separator only for this exact layout. Bounded
+  shader/sample validation `runtime.native-transform-probe-20260718-063146.log` exited `0` with
+  event JSON off and capped output. Focused validations
+  `runtime.native-transform-probe-20260718-063554.log` and
+  `runtime.native-transform-probe-20260718-063710.log` exited `0` and wrote coherent
+  character/officer replay BMPs. Standard validation
+  `runtime.native-83bd-projected-standard-20260718-064107.log` exited `0`, reported no
+  assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
+  `native_supported=1406..1407`, `native_projected=656..657`, and unsupported buckets down to
+  `0/5/1/0/20`, then wrote
+  `extracted\native_render_samples\native_83bd_projected_standard_20260718-064107.bmp` using `1397`
+  captured D3D11 draws. The current repeated transform blocker is
+  `VS=0xB21C8D7A8DB9B17A / PS=0x270B573E744D1ACB`, stride-10 attrs-5; the repeated layout blocker is
   `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path

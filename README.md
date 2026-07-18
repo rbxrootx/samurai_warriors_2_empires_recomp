@@ -42,10 +42,9 @@ References:
   fetch family, the repeated D5 stride-9 terrain/ground strip shader family, and the first
   promoted 1C9E/1B2E indexed stride-11 shared-skin projection families, the A395 indexed stride-10
   single-skin projection family, the strict 45C4 indexed stride-9 shared-skin projection family,
-  the 6B72 indexed stride-9 model/weapon strip family, and the ED8D indexed stride-12 shared-skin
-  cloth/banner family. The 6E10 indexed stride-10 stage/building model family is also mapped as a
-  projected-transform family, with standard replay coverage validated separately from its offscreen
-  focused replay.
+  the 6B72 indexed stride-9 model/weapon strip family, the ED8D indexed stride-12 shared-skin
+  cloth/banner family, the 6E10 indexed stride-10 stage/building model family, and the 83BD
+  indexed stride-12 weighted officer/character family.
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
@@ -188,7 +187,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   shared-skin layout, corrected word-10 UV fetch, `c4..c6` skin block, and `c0..c3` projection
   block. The `6E10B025BC817893 / 1C9617B76D4A368A` stride-10 attrs-5 family is promoted through its
   exact stage/building layout, `0x00FF` strip separators, `c13..c15` model block, and `c9..c12`
-  projection block.
+  projection block. The `83BD204594EECAB8 / D10452A3E31F9C61` stride-12 attrs-6 family is promoted
+  through its exact weighted officer/character layout, two explicit weights plus the implicit third
+  weight, `0x00FF` strip separators, `c15..c17` weighted skin rows, and `c11..c14` projection block.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
