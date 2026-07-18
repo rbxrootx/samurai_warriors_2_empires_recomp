@@ -567,9 +567,14 @@ python .\tools\export_native_gap_obj.py `
 
 Validation on `native_gap_probe_20260718-001120` exported ten transform-gap OBJ previews and two
 layout-gap OBJ previews from real gameplay draw data while keeping the large native event JSON stream
-disabled. This gives the future Blender/map-editor path two complementary sources: archive-side
-`G1M_` exports for editable assets, and runtime-side gap OBJs for correlating what the game actually
-draws in battle.
+disabled. The newer `native_gap_probe_20260718-002329` sample adds compact vertex/pixel float
+constant snapshots to every manifest row, and `tools\export_native_gap_obj.py` now writes a
+`gap_obj_manifest.csv` with raw bounds, constant indices, and heuristic projection candidates beside
+the OBJ files. Those projection fields are renderer research leads, not final camera math.
+
+This gives the future Blender/map-editor path two complementary sources: archive-side `G1M_` exports
+for editable assets, and runtime-side gap OBJs for correlating what the game actually draws in
+battle.
 
 ### OBJ Geometry Reimport
 

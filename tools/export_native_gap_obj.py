@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import itertools
 import json
 import math
 import struct
@@ -159,6 +161,118 @@ def decode_vertices(vertex_row: dict[str, Any], sample_root: Path) -> tuple[list
     return positions, uvs
 
 
+def position_bounds(
+    positions: list[tuple[float, float, float]]
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    mins = [min(position[axis] for position in positions) for axis in range(3)]
+    maxs = [max(position[axis] for position in positions) for axis in range(3)]
+    return (mins[0], mins[1], mins[2]), (maxs[0], maxs[1], maxs[2])
+
+
+def compact_float(value: Any) -> str:
+    if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        return "null"
+    return f"{float(value):.9g}"
+
+
+def constant_indices(row: dict[str, Any], key: str) -> str:
+    constants = row.get(key) or []
+    return ",".join(str(int(constant.get("index", 0))) for constant in constants)
+
+
+def constants_for_comment(row: dict[str, Any], key: str, limit: int = 4) -> str:
+    constants = row.get(key) or []
+    parts: list[str] = []
+    for constant in constants[:limit]:
+        values = ",".join(compact_float(value) for value in (constant.get("values") or [])[:4])
+        parts.append(f"c{int(constant.get('index', 0))}=({values})")
+    return " ".join(parts)
+
+
+def finite_constant_rows(row: dict[str, Any]) -> list[tuple[int, tuple[float, float, float, float]]]:
+    rows: list[tuple[int, tuple[float, float, float, float]]] = []
+    for constant in row.get("vertex_float_constant_values") or []:
+        values = constant.get("values") or []
+        if len(values) < 4:
+            continue
+        try:
+            vec = tuple(float(values[i]) for i in range(4))
+        except (TypeError, ValueError):
+            continue
+        if all(math.isfinite(value) for value in vec):
+            rows.append((int(constant.get("index", 0)), vec))
+    return rows
+
+
+def transform_position(
+    position: tuple[float, float, float],
+    rows: list[tuple[float, float, float, float]],
+    column_major: bool,
+) -> tuple[float, float, float, float]:
+    source = (position[0], position[1], position[2], 1.0)
+    if column_major:
+        return tuple(sum(rows[col][component] * source[col] for col in range(4)) for component in range(4))  # type: ignore[return-value]
+    return tuple(sum(rows[row][component] * source[component] for component in range(4)) for row in range(4))  # type: ignore[return-value]
+
+
+def analyze_projection_candidate(
+    positions: list[tuple[float, float, float]],
+    constant_rows: list[tuple[int, tuple[float, float, float, float]]],
+) -> dict[str, Any]:
+    if len(positions) < 3 or len(constant_rows) < 4:
+        return {}
+
+    stride = max(1, len(positions) // 256)
+    sampled_positions = positions[::stride][:256]
+    best: dict[str, Any] = {}
+    best_score = -1.0
+
+    for combo in itertools.combinations(range(len(constant_rows)), 4):
+        rows = [constant_rows[index][1] for index in combo]
+        indices = [constant_rows[index][0] for index in combo]
+        for column_major in (False, True):
+            ndc_points: list[tuple[float, float, float]] = []
+            inside_count = 0
+            valid_count = 0
+            for position in sampled_positions:
+                clip = transform_position(position, rows, column_major)
+                if not all(math.isfinite(component) for component in clip) or abs(clip[3]) < 1e-6:
+                    continue
+                ndc = (clip[0] / clip[3], clip[1] / clip[3], clip[2] / clip[3])
+                if not all(math.isfinite(component) for component in ndc):
+                    continue
+                valid_count += 1
+                if max(abs(ndc[0]), abs(ndc[1]), abs(ndc[2])) < 1000.0:
+                    ndc_points.append(ndc)
+                    if abs(ndc[0]) <= 2.0 and abs(ndc[1]) <= 2.0 and -10.0 <= ndc[2] <= 10.0:
+                        inside_count += 1
+
+            if not ndc_points:
+                continue
+
+            mins = [min(point[axis] for point in ndc_points) for axis in range(3)]
+            maxs = [max(point[axis] for point in ndc_points) for axis in range(3)]
+            extent = sum(maxs[axis] - mins[axis] for axis in range(3))
+            inside_ratio = inside_count / max(1, valid_count)
+            finite_ratio = valid_count / len(sampled_positions)
+            # Prefer candidates that keep samples finite and near clip space without collapsing to
+            # one point. This is a hint for renderer research, not a correctness proof.
+            score = finite_ratio + inside_ratio + min(extent, 10.0) * 0.01
+            if score > best_score:
+                best_score = score
+                best = {
+                    "indices": ",".join(f"c{index}" for index in indices),
+                    "orientation": "column_major" if column_major else "row_major",
+                    "finite_ratio": finite_ratio,
+                    "inside_ratio": inside_ratio,
+                    "ndc_min": (mins[0], mins[1], mins[2]),
+                    "ndc_max": (maxs[0], maxs[1], maxs[2]),
+                    "score": score,
+                }
+
+    return best
+
+
 def write_obj(
     output_path: Path,
     vertex_row: dict[str, Any],
@@ -178,6 +292,12 @@ def write_obj(
             f"# VS={vertex_row.get('vertex_shader')} PS={vertex_row.get('pixel_shader')} "
             f"sample={vertex_row.get('file')}\n"
         )
+        vertex_constants = constants_for_comment(vertex_row, "vertex_float_constant_values")
+        pixel_constants = constants_for_comment(vertex_row, "pixel_float_constant_values")
+        if vertex_constants:
+            handle.write(f"# vertex_constants {vertex_constants}\n")
+        if pixel_constants:
+            handle.write(f"# pixel_constants {pixel_constants}\n")
         for x, y, z in positions:
             handle.write(f"v {x:.9g} {y:.9g} {z:.9g}\n")
         has_uvs = len(uvs) == len(positions)
@@ -241,6 +361,8 @@ def export_draws(
         stride_words = int((vertex_row.get("vertex") or {}).get("stride_words", 0))
         output_path = output_root / f"gap_f{frame:06d}_d{draw:04d}_{support}_sw{stride_words}.obj"
         write_obj(output_path, vertex_row, positions, uvs, clipped_faces)
+        bounds_min, bounds_max = position_bounds(positions)
+        projection = analyze_projection_candidate(positions, finite_constant_rows(vertex_row))
         exported.append(
             {
                 "file": str(output_path),
@@ -253,6 +375,11 @@ def export_draws(
                 "indexed": bool(vertex_row.get("indexed")),
                 "vertex_shader": vertex_row.get("vertex_shader"),
                 "pixel_shader": vertex_row.get("pixel_shader"),
+                "bounds_min": bounds_min,
+                "bounds_max": bounds_max,
+                "vertex_constant_indices": constant_indices(vertex_row, "vertex_float_constant_values"),
+                "pixel_constant_indices": constant_indices(vertex_row, "pixel_float_constant_values"),
+                "projection": projection,
             }
         )
         if max_draws > 0 and len(exported) >= max_draws:
@@ -260,10 +387,88 @@ def export_draws(
     return exported
 
 
+def write_export_manifest(output_path: Path, exported: list[dict[str, Any]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        fieldnames = [
+            "file",
+            "frame",
+            "draw",
+            "support",
+            "stride_words",
+            "vertices",
+            "faces",
+            "indexed",
+            "vertex_shader",
+            "pixel_shader",
+            "bounds_min_x",
+            "bounds_min_y",
+            "bounds_min_z",
+            "bounds_max_x",
+            "bounds_max_y",
+            "bounds_max_z",
+            "vertex_constant_indices",
+            "pixel_constant_indices",
+            "projection_candidate",
+            "projection_orientation",
+            "projection_finite_ratio",
+            "projection_inside_ratio",
+            "projection_ndc_min_x",
+            "projection_ndc_min_y",
+            "projection_ndc_min_z",
+            "projection_ndc_max_x",
+            "projection_ndc_max_y",
+            "projection_ndc_max_z",
+            "projection_score",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in exported:
+            bounds_min = row["bounds_min"]
+            bounds_max = row["bounds_max"]
+            projection = row.get("projection") or {}
+            ndc_min = projection.get("ndc_min") or ("", "", "")
+            ndc_max = projection.get("ndc_max") or ("", "", "")
+            writer.writerow(
+                {
+                    "file": row["file"],
+                    "frame": row["frame"],
+                    "draw": row["draw"],
+                    "support": row["support"],
+                    "stride_words": row["stride_words"],
+                    "vertices": row["vertices"],
+                    "faces": row["faces"],
+                    "indexed": row["indexed"],
+                    "vertex_shader": row["vertex_shader"],
+                    "pixel_shader": row["pixel_shader"],
+                    "bounds_min_x": compact_float(bounds_min[0]),
+                    "bounds_min_y": compact_float(bounds_min[1]),
+                    "bounds_min_z": compact_float(bounds_min[2]),
+                    "bounds_max_x": compact_float(bounds_max[0]),
+                    "bounds_max_y": compact_float(bounds_max[1]),
+                    "bounds_max_z": compact_float(bounds_max[2]),
+                    "vertex_constant_indices": row["vertex_constant_indices"],
+                    "pixel_constant_indices": row["pixel_constant_indices"],
+                    "projection_candidate": projection.get("indices", ""),
+                    "projection_orientation": projection.get("orientation", ""),
+                    "projection_finite_ratio": compact_float(projection.get("finite_ratio", "")),
+                    "projection_inside_ratio": compact_float(projection.get("inside_ratio", "")),
+                    "projection_ndc_min_x": compact_float(ndc_min[0]),
+                    "projection_ndc_min_y": compact_float(ndc_min[1]),
+                    "projection_ndc_min_z": compact_float(ndc_min[2]),
+                    "projection_ndc_max_x": compact_float(ndc_max[0]),
+                    "projection_ndc_max_y": compact_float(ndc_max[1]),
+                    "projection_ndc_max_z": compact_float(ndc_max[2]),
+                    "projection_score": compact_float(projection.get("score", "")),
+                }
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sample_root", type=Path, help="Folder containing samples.jsonl")
     parser.add_argument("--out-dir", type=Path, help="OBJ output folder")
+    parser.add_argument("--manifest", type=Path, help="CSV manifest path")
     parser.add_argument("--support", default="unsupported_transform")
     parser.add_argument("--shader", help="Filter to one vertex shader hash")
     parser.add_argument("--max-draws", type=int, default=12)
@@ -272,11 +477,17 @@ def main() -> None:
     sample_root = args.sample_root
     output_root = args.out_dir or (sample_root / "obj")
     exported = export_draws(sample_root, output_root, args.support, args.max_draws, args.shader)
+    manifest_path = args.manifest or (output_root / "gap_obj_manifest.csv")
+    write_export_manifest(manifest_path, exported)
     print(f"Exported {len(exported)} OBJ previews to {output_root}")
+    print(f"Wrote manifest to {manifest_path}")
     for row in exported:
         print(
             f"{Path(row['file']).name}: vertices={row['vertices']} faces={row['faces']} "
-            f"stride_words={row['stride_words']} VS={row['vertex_shader']} PS={row['pixel_shader']}"
+            f"stride_words={row['stride_words']} bounds={row['bounds_min']}..{row['bounds_max']} "
+            f"project={row.get('projection', {}).get('indices', 'n/a')} "
+            f"inside={compact_float(row.get('projection', {}).get('inside_ratio', ''))} "
+            f"VS={row['vertex_shader']} PS={row['pixel_shader']}"
         )
 
 

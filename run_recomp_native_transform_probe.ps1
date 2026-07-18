@@ -242,6 +242,8 @@ $sampleManifest = Join-Path $sampleRoot "samples.jsonl"
 $sampleRowCount = 0
 $sampleKindCounts = @()
 $sampleSupportCounts = @()
+$sampleVertexConstantRows = 0
+$samplePixelConstantRows = 0
 if (Test-Path $sampleManifest) {
   $sampleRows = @(Get-Content -Path $sampleManifest | ForEach-Object { $_ | ConvertFrom-Json })
   $sampleRowCount = $sampleRows.Count
@@ -249,6 +251,12 @@ if (Test-Path $sampleManifest) {
     ForEach-Object { "$($_.Name)=$($_.Count)" })
   $sampleSupportCounts = @($sampleRows | Group-Object native_replay_support |
     Sort-Object Count -Descending | ForEach-Object { "$($_.Name)=$($_.Count)" })
+  $sampleVertexConstantRows = @($sampleRows | Where-Object {
+      $_.vertex_float_constant_values -and $_.vertex_float_constant_values.Count -gt 0
+    }).Count
+  $samplePixelConstantRows = @($sampleRows | Where-Object {
+      $_.pixel_float_constant_values -and $_.pixel_float_constant_values.Count -gt 0
+    }).Count
 }
 
 $eventTouched = @()
@@ -279,6 +287,8 @@ if ($process.HasExited) {
   SampleRows = $sampleRowCount
   SampleKindCounts = $sampleKindCounts
   SampleSupportCounts = $sampleSupportCounts
+  SampleVertexConstantRows = $sampleVertexConstantRows
+  SamplePixelConstantRows = $samplePixelConstantRows
   TransformGapCount = $transformMatches.Count
   LayoutGapCount = $layoutMatches.Count
   FirstTransformGaps = @($transformMatches | Select-Object -First 6 | ForEach-Object { $_.Line })

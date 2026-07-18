@@ -720,6 +720,26 @@ vertices and 1537 faces. These OBJ files are diagnostic geometry previews, not f
 render output, but they prove the no-JSON runtime probe can hand real gameplay vertex/index data to
 Blender-facing tooling.
 
+The sample manifest now carries the compact vertex and pixel float constant snapshots already
+available on each live `DrawEvent`. Validation
+`runtime.native-transform-probe-20260718-002329.log` exited with code `0`, kept
+`native_render_events=false`, touched no JSON event file, and wrote another `128` gap-only sample
+rows: `53` index, `46` texture, and `29` vertex. All `128` rows included vertex constants and pixel
+constants. The first stride-9 transform sample exposes vertex constants `c0-c7` and pixel constants
+`c0`, `c1`, `c254`, and `c255`, giving the native renderer a bounded way to inspect gameplay
+transform/material state without the large event stream.
+
+`tools\export_native_gap_obj.py` now writes `gap_obj_manifest.csv` beside the OBJ files with raw
+position bounds, shader hashes, constant indices, and a heuristic projection-candidate report. The
+projection fields intentionally are not proof of the real Xbox vertex shader. They score possible
+four-constant row/column groupings so the next renderer pass has concrete candidates to test in
+D3D11 instead of guessing. The fresh run wrote
+`extracted\native_render_samples\native_gap_probe_20260718-002329\obj\gap_obj_manifest_projection.csv`;
+for example, the first indexed stride-9 draw records raw bounds
+`(-19.8618736,-7.46388149,-18.582634)..(130.643448,7.46388197,7.53691673)` and a candidate
+`c0,c2,c4,c6` in column-major orientation. Treat that as a lead for shader analysis, not a final
+projection formula.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the

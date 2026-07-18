@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -573,6 +574,20 @@ void MixHash(uint64_t& target, uint64_t hash) {
     return;
   }
   target ^= hash + 0x9E3779B97F4A7C15ull + (target << 6) + (target >> 2);
+}
+
+uint32_t FloatBits(float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+void WriteJsonFloat(FILE* file, float value) {
+  if (std::isfinite(value)) {
+    std::fprintf(file, "%.9g", static_cast<double>(value));
+    return;
+  }
+  std::fputs("null", file);
 }
 
 uint64_t TransformGapAttributeSignature(const VertexFetchSummary& fetch) {
@@ -1702,6 +1717,38 @@ class Sidecar final : public EventSink {
         event.primitive_type, event.index_count, event.indexed ? "true" : "false",
         static_cast<unsigned long long>(event.vertex_shader_hash),
         static_cast<unsigned long long>(event.pixel_shader_hash));
+    WriteFloatConstants("vertex_float_constant_values", event.vertex_float_constants,
+                        event.vertex_float_constant_summary_count);
+    WriteFloatConstants("pixel_float_constant_values", event.pixel_float_constants,
+                        event.pixel_float_constant_summary_count);
+  }
+
+  void WriteFloatConstants(
+      const char* name,
+      const rex::graphics::native_render::FloatConstantSummary* constants,
+      uint32_t count) {
+    std::fprintf(sample_metadata_file_, ",\"%s\":[", name);
+    const uint32_t constant_count =
+        std::min(count, rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw);
+    for (uint32_t i = 0; i < constant_count; ++i) {
+      const auto& constant = constants[i];
+      if (i) {
+        std::fputc(',', sample_metadata_file_);
+      }
+      std::fprintf(sample_metadata_file_, "{\"index\":%u,\"values\":[",
+                   constant.constant_index);
+      for (uint32_t component = 0; component < 4; ++component) {
+        if (component) {
+          std::fputc(',', sample_metadata_file_);
+        }
+        WriteJsonFloat(sample_metadata_file_, constant.values[component]);
+      }
+      std::fprintf(sample_metadata_file_,
+                   "],\"bits\":[\"0x%08X\",\"0x%08X\",\"0x%08X\",\"0x%08X\"]}",
+                   FloatBits(constant.values[0]), FloatBits(constant.values[1]),
+                   FloatBits(constant.values[2]), FloatBits(constant.values[3]));
+    }
+    std::fputc(']', sample_metadata_file_);
   }
 
   void WriteVertexSampleMetadata(const DrawEvent& event, NativeReplaySupport replay_support,

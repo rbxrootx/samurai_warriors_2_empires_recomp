@@ -367,6 +367,17 @@
   into OBJ previews; the validation pass exported ten transform-gap OBJs and two layout-gap OBJs,
   including indexed gameplay draws with stride-9, stride-10, stride-11, and stride-12 vertex
   layouts. This is the first runtime-draw-to-Blender bridge for native gameplay renderer research.
+- Gap sample metadata now includes compact vertex and pixel float constant snapshots. Validation
+  `runtime.native-transform-probe-20260718-002329.log` exited with code `0`, kept
+  `native_render_events=false`, touched no JSON event file, and again wrote `128` bounded gap rows:
+  `53` index, `46` texture, and `29` vertex. All `128` rows had vertex and pixel constants. The OBJ
+  exporter now writes a compact `gap_obj_manifest.csv` with raw bounds, constant indices, and
+  heuristic projection candidates. Fresh output
+  `extracted\native_render_samples\native_gap_probe_20260718-002329\obj\gap_obj_manifest_projection.csv`
+  marks the first stride-9 indexed transform draw as `388` vertices, `239` faces, shader pair
+  `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`, vertex constants `c0-c7`, and pixel constants
+  `c0,c1,c254,c255`. The projection candidates are leads for the native gameplay vertex shader, not
+  proof of the final MVP formula.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

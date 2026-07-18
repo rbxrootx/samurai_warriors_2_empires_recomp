@@ -120,7 +120,7 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Observe live ReXGlue draw/swap events without editing generated recomp code.
 - Classify visible/no-output/depth/indexed/layout/texture buckets.
 - Capture bounded guest vertex, index, and texture memory samples.
-- Convert bounded native gap samples into simple OBJ previews with
+- Convert bounded native gap samples into simple OBJ previews and compact CSV projection reports with
   `tools/export_native_gap_obj.py`.
 - Decode linear BC3/DXT5 menu textures.
 - Replay supported title/menu textured and solid draw families through D3D11.
