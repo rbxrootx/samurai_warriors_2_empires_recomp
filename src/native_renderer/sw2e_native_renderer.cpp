@@ -122,7 +122,8 @@ REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_projected_pixel_shader_fil
                       "Optional hex pixel-shader hash filter for projected transform-gap replay");
 
 REXCVAR_DEFINE_STRING(
-    sw2e_native_renderer_gpu_replay_projection_strategy, "heuristic", "SM2/Native Render",
+    sw2e_native_renderer_gpu_replay_projection_strategy, "shader-final-or-heuristic",
+    "SM2/Native Render",
     "Projected transform-gap projection strategy: heuristic, shader-final, shader-bone0-final, "
     "shader-skinned-final, or shader-final-or-heuristic");
 
@@ -237,6 +238,7 @@ struct FrameStats {
   uint32_t native_replay_supported_textured_draws = 0;
   uint32_t native_replay_supported_solid_draws = 0;
   uint32_t native_replay_supported_depth_only_draws = 0;
+  uint32_t native_replay_supported_projected_draws = 0;
   uint32_t native_replay_supported_indexed_draws = 0;
   uint32_t native_replay_depth_only_draws = 0;
   uint32_t native_replay_unsupported_indexed_draws = 0;
@@ -967,6 +969,10 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   }
   candidate.use_shared_shader_skin = include_shared_shader_skin;
   candidate = ScoreNativeReplayProjectionCandidate(candidate, vertices);
+  if (!candidate.valid && event.vertex_shader_hash == 0xD5CCD0C915DDCC0Bull &&
+      candidate.finite_ratio >= 0.5f) {
+    candidate.valid = true;
+  }
   if (!candidate.valid &&
       REXCVAR_GET(sw2e_native_renderer_gpu_replay_normalize_projected_gaps) &&
       candidate.finite_ratio >= 0.5f) {
@@ -1676,6 +1682,7 @@ enum class NativeReplaySupport {
   kSupportedIndexedTextured,
   kSupportedSolid,
   kSupportedDepthOnly,
+  kSupportedProjectedTransform,
   kDepthOnly,
   kUnsupportedIndexed,
   kUnsupportedShape,
@@ -1696,6 +1703,8 @@ const char* NativeReplaySupportName(NativeReplaySupport support) {
       return "supported_solid";
     case NativeReplaySupport::kSupportedDepthOnly:
       return "supported_depth_only";
+    case NativeReplaySupport::kSupportedProjectedTransform:
+      return "supported_projected_transform";
     case NativeReplaySupport::kDepthOnly:
       return "depth_only";
     case NativeReplaySupport::kUnsupportedIndexed:
@@ -1731,6 +1740,24 @@ bool CanReplayNativeDepthOnlyDraw(const DrawEvent& event) {
          FindNativeReplaySolidVertexFetch(event);
 }
 
+bool CanReplayNativeD5ProjectedTransformDraw(const DrawEvent& event) {
+  if (event.vertex_shader_hash != 0xD5CCD0C915DDCC0Bull ||
+      event.pixel_shader_hash != 0x7B81C162CBA6D195ull ||
+      !HasNativeReplayColorOutput(event) || event.vertex_memexport_mask != 0 ||
+      event.pixel_memexport_mask != 0 || HasVizQuerySideEffect(event) ||
+      !IsNativeReplayTexturedTriangleShape(event)) {
+    return false;
+  }
+
+  const VertexFetchSummary* vertex_fetch = FindDecodableNativeReplayTexturedVertexFetch(event);
+  if (!vertex_fetch || IsNativeReplayScreenSpaceTexturedVertexFetch(*vertex_fetch)) {
+    return false;
+  }
+
+  std::optional<TextureDumpPlan> texture_plan;
+  return FindNativeReplayTextureFetch(event, texture_plan) != nullptr;
+}
+
 NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
   if (IsNativeNoOutputSkipCandidate(event)) {
     return NativeReplaySupport::kNoOutputSkipCandidate;
@@ -1748,6 +1775,9 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
         return NativeReplaySupport::kUnsupportedTexture;
       }
       return NativeReplaySupport::kSupportedTextured;
+    }
+    if (CanReplayNativeD5ProjectedTransformDraw(event)) {
+      return NativeReplaySupport::kSupportedProjectedTransform;
     }
     if (!FindNativeReplayTexturedVertexFetch(event)) {
       if (FindDecodableNativeReplayTexturedVertexFetch(event)) {
@@ -1908,6 +1938,10 @@ class Sidecar final : public EventSink {
         ++stats_.native_replay_supported_depth_only_draws;
         ++stats_.native_replay_depth_only_draws;
         CountDepthOnly(event);
+        break;
+      case NativeReplaySupport::kSupportedProjectedTransform:
+        ++stats_.native_replay_supported_draws;
+        ++stats_.native_replay_supported_projected_draws;
         break;
       case NativeReplaySupport::kDepthOnly:
         ++stats_.native_replay_depth_only_draws;
@@ -2300,7 +2334,8 @@ class Sidecar final : public EventSink {
     }
     const NativeReplaySupport replay_support = ClassifyNativeReplaySupport(event);
     if (!HasNativeReplayColorOutput(event) ||
-        replay_support != NativeReplaySupport::kUnsupportedTransform) {
+        (replay_support != NativeReplaySupport::kUnsupportedTransform &&
+         replay_support != NativeReplaySupport::kSupportedProjectedTransform)) {
       return false;
     }
     if (!IsNativeReplayTexturedTriangleShape(event)) {
@@ -2363,7 +2398,11 @@ class Sidecar final : public EventSink {
     const uint32_t vertex_count = event.indexed ? (max_index + 1) : event.index_count;
     const int32_t min_projected_vertices =
         REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices);
-    if (vertex_count < static_cast<uint32_t>(std::max(min_projected_vertices, 3))) {
+    const uint32_t required_vertex_count =
+        replay_support == NativeReplaySupport::kSupportedProjectedTransform
+            ? 3u
+            : static_cast<uint32_t>(std::max(min_projected_vertices, 3));
+    if (vertex_count < required_vertex_count) {
       native_gpu_replay_draw_keys_.erase(key);
       return RejectNativeGpuReplayProjectedTransformGap(event, "min_vertices", replay_support);
     }
@@ -3350,7 +3389,8 @@ class Sidecar final : public EventSink {
           "vfetch_draws={} "
           "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
           "noout_skip={} noout_point={} raster_noout={} viz_query={} "
-          "native_supported={} native_tex={} native_solid={} native_depth={} native_indexed={} "
+          "native_supported={} native_tex={} native_solid={} native_depth={} native_projected={} "
+          "native_indexed={} "
           "depth_only={} "
           "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
           "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
@@ -3368,6 +3408,7 @@ class Sidecar final : public EventSink {
           stats_.native_replay_supported_textured_draws,
           stats_.native_replay_supported_solid_draws,
           stats_.native_replay_supported_depth_only_draws,
+          stats_.native_replay_supported_projected_draws,
           stats_.native_replay_supported_indexed_draws, stats_.native_replay_depth_only_draws,
           stats_.native_replay_unsupported_indexed_draws,
           stats_.native_replay_unsupported_shape_draws,
@@ -3391,7 +3432,8 @@ class Sidecar final : public EventSink {
         "vfetch_draws={} "
         "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
         "noout_skip={} noout_point={} raster_noout={} viz_query={} "
-        "native_supported={} native_tex={} native_solid={} native_depth={} native_indexed={} "
+        "native_supported={} native_tex={} native_solid={} native_depth={} native_projected={} "
+        "native_indexed={} "
         "depth_only={} "
         "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
         "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
@@ -3407,6 +3449,7 @@ class Sidecar final : public EventSink {
         stats_.native_replay_supported_draws, stats_.native_replay_supported_textured_draws,
         stats_.native_replay_supported_solid_draws,
         stats_.native_replay_supported_depth_only_draws,
+        stats_.native_replay_supported_projected_draws,
         stats_.native_replay_supported_indexed_draws, stats_.native_replay_depth_only_draws,
         stats_.native_replay_unsupported_indexed_draws,
         stats_.native_replay_unsupported_shape_draws,

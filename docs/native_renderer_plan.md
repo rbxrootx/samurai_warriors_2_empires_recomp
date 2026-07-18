@@ -99,11 +99,11 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_include_solid_geometry` | `false` | Opt-in capture/replay for solid rectangle-list and triangle-strip title/menu families. |
 | `sw2e_native_renderer_gpu_replay_include_transform_gaps` | `false` | Opt-in capture/replay for experimental gameplay transform-gap draw families. |
 | `sw2e_native_renderer_gpu_replay_transform_gaps_only` | `false` | Restricts replay capture to experimental transform-gap draws. |
-| `sw2e_native_renderer_gpu_replay_transform_gap_min_vertices` | `32` | Minimum decoded vertex count for projected transform-gap replay draws. |
+| `sw2e_native_renderer_gpu_replay_transform_gap_min_vertices` | `32` | Minimum decoded vertex count for unresolved projected transform-gap replay draws. Promoted supported projected families only require a valid triangle. |
 | `sw2e_native_renderer_gpu_replay_projected_min_indices` | `0` | Optional minimum expanded index count for projected transform-gap replay draws. |
 | `sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter` | empty | Optional hex vertex-shader hash filter for projected transform-gap replay. |
 | `sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter` | empty | Optional hex pixel-shader hash filter for projected transform-gap replay. |
-| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-bone0-final` applies the first upstream shader matrix block before the final projection; `shader-skinned-final` evaluates the shared shader's weight/index palette path before the final projection; `shader-final-or-heuristic` compares the older final/heuristic paths. |
+| `sw2e_native_renderer_gpu_replay_projection_strategy` | `shader-final-or-heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-bone0-final` applies the first upstream shader matrix block before the final projection; `shader-skinned-final` evaluates the shared shader's weight/index palette path before the final projection; `shader-final-or-heuristic` compares the older final/heuristic paths. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 | `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
 | `dump_shaders` | empty | ReXGlue GPU cvar. When set to a folder, ReXGlue writes analyzed shader ucode and translated shader files there. Use only in short focused probes. |
@@ -1040,6 +1040,24 @@ captured D3D11 draws. That BMP is `1280x720`, sampled `2304/2304` nonblack point
 `0/5/1/0/423`, so transform/shape work remains before backend swap suppression can be enabled for
 the battle scene. The run's `[error]` hits were the known compatibility-backend resolve failures,
 not native replay assertions.
+
+The D5 direct-projection family is now promoted out of generic transform-gap accounting as
+`supported_projected_transform` when the draw matches `VS=0xD5CCD0C915DDCC0B` /
+`PS=0x7B81C162CBA6D195`, has a decodable non-screen-space vertex fetch, no memexport/viz side
+effects, and a usable texture fetch. The standard replay path accepts this family alongside
+supported textured/solid/depth draws when `sw2e_native_renderer_gpu_replay_include_transform_gaps`
+is enabled; unresolved transform gaps still obey the `transform_gap_min_vertices` diagnostic filter,
+but promoted D5 draws only require a valid triangle. Validation
+`runtime.native-d5-projected-standard-20260718-042928.log` exited `0`, reported zero assertions and
+zero native replay failures, and reached repeated gameplay frames with `native_supported=1130`,
+`native_tex=728`, `native_solid=12`, `native_depth=10`, `native_projected=380`, and
+`unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/297`. The offscreen replay wrote
+`extracted\native_render_samples\native_d5_projected_standard_20260718-042928.bmp` using `1388`
+captured D3D11 draws; the `1280x720` BMP sampled `3072/3072` nonblack points with mean RGB `120.88`.
+Visually it is still a projected terrain/strip diagnostic, not a correct full gameplay frame. The
+next visible-scene blockers are the indexed stride-11 `VS=0x1C9E2812AEBDBE4E` /
+`PS=0x7703E4142DFBD4D4` transform family, the single indexed layout gap, the five shape gaps, and
+native ownership of render-target composition.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

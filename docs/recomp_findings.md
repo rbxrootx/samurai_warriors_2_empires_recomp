@@ -612,6 +612,19 @@
   `102.4`). Native scene ownership is still blocked by the remaining unsupported transform/shape
   buckets (`0/5/1/0/401` to `0/5/1/0/423` in that run); the matched `[error]` lines were the known
   compatibility-backend resolve errors.
+- The D5 direct-projection family is now classified as `supported_projected_transform` in standard
+  replay, not only in the transform-gap probe path. Matching requires
+  `VS=0xD5CCD0C915DDCC0B / PS=0x7B81C162CBA6D195`, decodable non-screen-space stride-9 vertex data,
+  no memexport/viz side effects, and a usable texture fetch. Validation
+  `runtime.native-d5-projected-standard-20260718-042928.log` exited `0`, kept event JSON and sample
+  dumps off, reported zero assertions and zero native replay failures, and reached repeated gameplay
+  frames with `native_supported=1130`, `native_tex=728`, `native_solid=12`, `native_depth=10`,
+  `native_projected=380`, and unsupported buckets reduced to `0/5/1/0/297`. The offscreen D3D11
+  replay wrote `extracted\native_render_samples\native_d5_projected_standard_20260718-042928.bmp`
+  using `1388` captured draws; the `1280x720` BMP sampled `3072/3072` nonblack points with mean RGB
+  `120.88`. It is still a projected terrain/strip diagnostic rather than correct full-scene output;
+  the next blockers are indexed stride-11 transform draws, one indexed layout gap, five shape gaps,
+  and native render-target composition.
 
 ## Save And Storage Path
 

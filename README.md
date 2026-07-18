@@ -167,7 +167,8 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Dump compact ReXGlue shader ucode files by hash during short no-JSON probes.
 - Capture wider shader constant windows from a source ReXGlue SDK checkout for transform work.
 - Replay the `D5CCD0C915DDCC0B` stride-9 projected strip family through the shader-observed direct
-  `c7..c10` `oPos` block for terrain/ground-strip diagnostics.
+  `c7..c10` `oPos` block as a standard `supported_projected_transform` replay family for
+  terrain/ground-strip diagnostics.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
