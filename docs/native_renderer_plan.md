@@ -103,6 +103,7 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_projected_min_indices` | `0` | Optional minimum expanded index count for projected transform-gap replay draws. |
 | `sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter` | empty | Optional hex vertex-shader hash filter for projected transform-gap replay. |
 | `sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter` | empty | Optional hex pixel-shader hash filter for projected transform-gap replay. |
+| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-final-or-heuristic` compares both. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 | `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
 | `dump_shaders` | empty | ReXGlue GPU cvar. When set to a folder, ReXGlue writes analyzed shader ucode and translated shader files there. Use only in short focused probes. |
@@ -842,6 +843,31 @@ they fetch the model position/UV, do indexed matrix work through `c[4+a0]`, `c[5
 work through `c[7+a0]`, `c[8+a0]`, and `c[9+a0]`. This is the concrete reason the old heuristic
 was unstable: the final render path needs shader-specific transform evaluation and more constant
 coverage, not just brute-force four-row matrix scoring.
+
+`-ProjectedGapMode shader-final-fit` now routes through `projection_strategy=shader-final` and tests
+the final projection block seen in dumped ucode. Validation
+`runtime.native-transform-probe-20260718-014425.log` filtered to `VS=0xED8D12865D27DEBF`, exited
+with code `0`, kept event JSON off, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-014425.bmp`. The log shows
+the retained stride-12 shapes again (`845/2415` and `1542/2853`) with
+`source=shader-final-c0-c3` and constants `c0,c1,c2,c3`. The pre-normalization NDC range is finite
+but completely outside the clip region, for example
+`(-1.5006,-4.9612,3.3707)..(-1.4916,-4.9605,3.3742)`. That is the best current proof that final
+projection alone is not enough: native gameplay rendering needs the upstream skin/world phase from
+`c[4+a0]..c[6+a0]`.
+
+The project now includes `tools\apply_rexglue_native_render_wide_constants.ps1` for source-SDK
+builds. It changes ReXGlue's native-render event stream constant cap from `8` to `64`; the runtime
+and project side must both be rebuilt after applying it. The project heuristic remains capped at the
+first eight constants, so widening the SDK does not explode the old scorer, but exact shader-guided
+lookups and sample manifests can now see higher-index constants. Validation
+`runtime.native-transform-probe-20260718-014734.log` applied the patch locally, rebuilt cleanly, ran
+a bounded gap sample probe, kept `native_render_events=false`, touched no event JSON, and wrote
+`64` rows to
+`extracted\native_render_samples\native_gap_probe_20260718-014734\samples.jsonl`
+(`542107` bytes). Every row had `64` vertex float constants and the maximum captured vertex
+constant index was `63`; the first `45C4DDDAAA10F75F / 7703E4142DFBD4D4` rows now include constants
+`c0..c63`.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

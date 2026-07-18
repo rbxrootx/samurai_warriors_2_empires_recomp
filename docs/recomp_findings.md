@@ -491,6 +491,20 @@
   `c[7+a0]..c[9+a0]`. The current event stream gives only compact constant snapshots, capped at
   eight float4 constants per stage, so full native gameplay rendering needs shader-guided constant
   capture/evaluation rather than the old arbitrary four-constant projection heuristic.
+- `-ProjectedGapMode shader-final-fit` now provides a shader-guided final-block diagnostic.
+  Validation `runtime.native-transform-probe-20260718-014425.log` filtered to
+  `VS=0xED8D12865D27DEBF`, exited with code `0`, touched no event JSON, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-014425.bmp`. Candidate logs
+  show `source=shader-final-c0-c3` with constants `c0,c1,c2,c3`; the output is finite but outside
+  clip space before normalization (`inside=0.000`), proving that the next implementation step is the
+  upstream skin/world transform through `c[4+a0]..c[6+a0]`.
+- `tools\apply_rexglue_native_render_wide_constants.ps1` patches a source ReXGlue SDK checkout so
+  `kMaxFloatConstantSummariesPerDraw` is `64` instead of `8`. Validation
+  `runtime.native-transform-probe-20260718-014734.log` applied that local SDK patch, rebuilt, kept
+  event JSON off, and wrote a bounded `64`-row gap manifest. The manifest is `542107` bytes; every
+  row carries `64` vertex constants, with maximum vertex constant index `63`, including rows for
+  `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`. The old projection heuristic remains capped to
+  its first-eight behavior so wider captures do not make runtime probing explode combinatorially.
 
 ## Save And Storage Path
 
