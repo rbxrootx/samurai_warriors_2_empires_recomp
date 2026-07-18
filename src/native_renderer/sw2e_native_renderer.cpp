@@ -771,6 +771,19 @@ const rex::graphics::native_render::FloatConstantSummary* FindNativeReplayFloatC
   return nullptr;
 }
 
+const rex::graphics::native_render::FloatConstantSummary* FindNativeReplayPixelFloatConstant(
+    const DrawEvent& event, uint32_t constant_index) {
+  const uint32_t constant_count =
+      std::min(event.pixel_float_constant_summary_count,
+               rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw);
+  for (uint32_t i = 0; i < constant_count; ++i) {
+    if (event.pixel_float_constants[i].constant_index == constant_index) {
+      return &event.pixel_float_constants[i];
+    }
+  }
+  return nullptr;
+}
+
 bool BuildNativeReplaySwizzledProjectionRows(
     const DrawEvent& event, const std::array<uint32_t, 4>& constant_indices,
     bool negate_y_row, std::array<std::array<float, 4>, 4>& rows) {
@@ -2133,6 +2146,11 @@ class Sidecar final : public EventSink {
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
+    replay_draw.pixel_mode = gpu_replay::ReplayPixelMode::kTextureColorLerpConstant;
+    if (const auto* pixel_constant0 = FindNativeReplayPixelFloatConstant(event, 0)) {
+      replay_draw.pixel_constant0 = {pixel_constant0->values[0], pixel_constant0->values[1],
+                                     pixel_constant0->values[2], pixel_constant0->values[3]};
+    }
     replay_draw.indices = std::move(indices);
     replay_draw.vertices.reserve(event.index_count);
 
@@ -2164,6 +2182,7 @@ class Sidecar final : public EventSink {
       replay_vertex.g = color_constant->values[1];
       replay_vertex.b = color_constant->values[2];
       replay_vertex.a = alpha_constant ? alpha_constant->values[0] : color_constant->values[3];
+      replay_vertex.texture_lerp_factor = 1.0f;
       replay_draw.vertices.push_back(replay_vertex);
     }
 

@@ -980,8 +980,9 @@ native_solid=12` with only one remaining layout gap in the same gameplay scene. 
 show repeated DE7 captures such as `vertices=4`, `indices=6`, `stride_words=1`, and `texture=32x32`.
 The BMP is a valid nonblank `1280x720` replay with visible UI/roster text, proving this family is no
 longer a layout wall. The generic textured replay shader now multiplies sampled textures by captured
-vertex color/alpha, but the DE7 pixel shader's `c0`/factor modulation still needs a dedicated
-replacement shader for exact output.
+vertex color/alpha. DE7 captures also have a dedicated texture-lerp pixel mode that carries pixel
+`c0` and a per-vertex factor into the D3D11 replay; the current DE7 capture uses the observed
+factor-`1` path, so the remaining exactness work is recovering the shader branch/`c20` factor path.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

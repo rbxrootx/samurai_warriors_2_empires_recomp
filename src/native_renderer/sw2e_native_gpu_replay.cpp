@@ -256,12 +256,14 @@ struct VSInput {
   float4 position : POSITION;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 struct VSOutput {
   float4 position : SV_Position;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 VSOutput main(VSInput input) {
@@ -271,6 +273,7 @@ VSOutput main(VSInput input) {
   output.position = float4(ndc, 0.0f, 1.0f);
   output.texcoord = input.texcoord;
   output.color = input.color;
+  output.tex_lerp = input.tex_lerp;
   return output;
 }
 )";
@@ -280,12 +283,14 @@ struct VSInput {
   float4 position : POSITION;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 struct VSOutput {
   float4 position : SV_Position;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 VSOutput main(VSInput input) {
@@ -293,6 +298,7 @@ VSOutput main(VSInput input) {
   output.position = input.position;
   output.texcoord = input.texcoord;
   output.color = input.color;
+  output.tex_lerp = input.tex_lerp;
   return output;
 }
 )";
@@ -305,10 +311,33 @@ struct PSInput {
   float4 position : SV_Position;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 float4 main(PSInput input) : SV_Target {
   return source_texture.Sample(source_sampler, input.texcoord) * input.color;
+}
+)";
+
+const char kTextureLerpPixelShaderHlsl[] = R"(
+Texture2D<float4> source_texture : register(t0);
+SamplerState source_sampler : register(s0);
+
+cbuffer PixelLerpParams : register(b1) {
+  float4 constant_color;
+};
+
+struct PSInput {
+  float4 position : SV_Position;
+  float2 texcoord : TEXCOORD0;
+  float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
+};
+
+float4 main(PSInput input) : SV_Target {
+  float4 tex_color = source_texture.Sample(source_sampler, input.texcoord) * input.color;
+  float factor = saturate(input.tex_lerp);
+  return float4(lerp(constant_color.rgb, tex_color.rgb, factor), tex_color.a);
 }
 )";
 
@@ -320,6 +349,7 @@ struct PSInput {
   float4 position : SV_Position;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 float4 main(PSInput input) : SV_Target {
@@ -335,6 +365,7 @@ struct PSInput {
   float4 position : SV_Position;
   float2 texcoord : TEXCOORD0;
   float4 color : COLOR0;
+  float tex_lerp : TEXCOORD1;
 };
 
 float4 main(PSInput input) : SV_Target {
@@ -499,6 +530,7 @@ struct ReplayD3D11Pipeline {
   ComPtr<ID3D11VertexShader> vertex_shader;
   ComPtr<ID3D11VertexShader> projected_vertex_shader;
   ComPtr<ID3D11PixelShader> pixel_shader;
+  ComPtr<ID3D11PixelShader> texture_lerp_pixel_shader;
   ComPtr<ID3D11PixelShader> projected_pixel_shader;
   ComPtr<ID3D11PixelShader> solid_pixel_shader;
   ComPtr<ID3D11InputLayout> input_layout;
@@ -606,11 +638,13 @@ struct ReplayD3D11Pipeline {
     ComPtr<ID3DBlob> vs_blob;
     ComPtr<ID3DBlob> projected_vs_blob;
     ComPtr<ID3DBlob> ps_blob;
+    ComPtr<ID3DBlob> texture_lerp_ps_blob;
     ComPtr<ID3DBlob> projected_ps_blob;
     ComPtr<ID3DBlob> solid_ps_blob;
     if (!CompileShader(kVertexShaderHlsl, "main", "vs_5_0", vs_blob) ||
         !CompileShader(kProjectedVertexShaderHlsl, "main", "vs_5_0", projected_vs_blob) ||
         !CompileShader(kPixelShaderHlsl, "main", "ps_5_0", ps_blob) ||
+        !CompileShader(kTextureLerpPixelShaderHlsl, "main", "ps_5_0", texture_lerp_ps_blob) ||
         !CompileShader(kProjectedPixelShaderHlsl, "main", "ps_5_0", projected_ps_blob) ||
         !CompileShader(kSolidPixelShaderHlsl, "main", "ps_5_0", solid_ps_blob)) {
       return false;
@@ -641,6 +675,15 @@ struct ReplayD3D11Pipeline {
       return false;
     }
 
+    hr = device->CreatePixelShader(texture_lerp_ps_blob->GetBufferPointer(),
+                                   texture_lerp_ps_blob->GetBufferSize(), nullptr,
+                                   &texture_lerp_pixel_shader);
+    if (FAILED(hr)) {
+      REXLOG_ERROR("SW2E native GPU replay failed to create texture lerp pixel shader: 0x{:08x}",
+                   static_cast<uint32_t>(hr));
+      return false;
+    }
+
     hr = device->CreatePixelShader(projected_ps_blob->GetBufferPointer(),
                                    projected_ps_blob->GetBufferSize(), nullptr,
                                    &projected_pixel_shader);
@@ -658,12 +701,13 @@ struct ReplayD3D11Pipeline {
       return false;
     }
 
-    std::array<D3D11_INPUT_ELEMENT_DESC, 3> input_elements = {{
+    std::array<D3D11_INPUT_ELEMENT_DESC, 4> input_elements = {{
         {"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0,
          D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 24,
          D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 1, DXGI_FORMAT_R32_FLOAT, 0, 40, D3D11_INPUT_PER_VERTEX_DATA, 0},
     }};
     hr = device->CreateInputLayout(input_elements.data(), static_cast<UINT>(input_elements.size()),
                                    vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(),
@@ -727,6 +771,34 @@ struct ReplayD3D11Pipeline {
   }
 };
 
+struct PixelLerpParams {
+  float constant_color[4] = {};
+};
+
+ComPtr<ID3D11Buffer> CreatePixelLerpConstantBuffer(ID3D11Device* device,
+                                                   const ReplayDraw& draw) {
+  static_assert(sizeof(PixelLerpParams) == 16,
+                "D3D11 constant buffers must stay 16-byte aligned");
+  PixelLerpParams params = {{draw.pixel_constant0[0], draw.pixel_constant0[1],
+                             draw.pixel_constant0[2], draw.pixel_constant0[3]}};
+
+  D3D11_BUFFER_DESC constant_desc = {};
+  constant_desc.ByteWidth = sizeof(PixelLerpParams);
+  constant_desc.Usage = D3D11_USAGE_IMMUTABLE;
+  constant_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  D3D11_SUBRESOURCE_DATA constant_data = {};
+  constant_data.pSysMem = &params;
+
+  ComPtr<ID3D11Buffer> constant_buffer;
+  HRESULT hr = device->CreateBuffer(&constant_desc, &constant_data, &constant_buffer);
+  if (FAILED(hr)) {
+    REXLOG_WARN("SW2E native GPU replay skipped frame {} draw {} pixel lerp constants: 0x{:08x}",
+                draw.frame, draw.draw, static_cast<uint32_t>(hr));
+    return {};
+  }
+  return constant_buffer;
+}
+
 uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context,
                               ID3D11RenderTargetView* render_target,
                               ReplayD3D11Pipeline& pipeline,
@@ -780,6 +852,15 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
       }
     }
 
+    ComPtr<ID3D11Buffer> pixel_lerp_constant_buffer;
+    if (textured_draw && draw.kind == ReplayDrawKind::kTexturedTriangles &&
+        draw.pixel_mode == ReplayPixelMode::kTextureColorLerpConstant) {
+      pixel_lerp_constant_buffer = CreatePixelLerpConstantBuffer(device, draw);
+      if (!pixel_lerp_constant_buffer) {
+        continue;
+      }
+    }
+
     D3D11_BUFFER_DESC vertex_desc = {};
     vertex_desc.ByteWidth = static_cast<UINT>(draw.vertices.size() * sizeof(ReplayVertex));
     vertex_desc.Usage = D3D11_USAGE_IMMUTABLE;
@@ -818,14 +899,22 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
       context->VSSetShader(pipeline.vertex_shader.Get(), nullptr, 0);
     }
     if (textured_draw) {
-      context->PSSetShader(draw.kind == ReplayDrawKind::kProjectedTexturedTriangles
-                               ? pipeline.projected_pixel_shader.Get()
-                               : pipeline.pixel_shader.Get(),
-                           nullptr, 0);
+      if (draw.kind == ReplayDrawKind::kProjectedTexturedTriangles) {
+        context->PSSetShader(pipeline.projected_pixel_shader.Get(), nullptr, 0);
+      } else if (draw.pixel_mode == ReplayPixelMode::kTextureColorLerpConstant) {
+        context->PSSetShader(pipeline.texture_lerp_pixel_shader.Get(), nullptr, 0);
+        context->PSSetConstantBuffers(1, 1, pixel_lerp_constant_buffer.GetAddressOf());
+      } else {
+        ID3D11Buffer* null_constant_buffer = nullptr;
+        context->PSSetShader(pipeline.pixel_shader.Get(), nullptr, 0);
+        context->PSSetConstantBuffers(1, 1, &null_constant_buffer);
+      }
       context->PSSetShaderResources(0, 1, &texture_view);
     } else {
       ID3D11ShaderResourceView* null_view = nullptr;
+      ID3D11Buffer* null_constant_buffer = nullptr;
       context->PSSetShader(pipeline.solid_pixel_shader.Get(), nullptr, 0);
+      context->PSSetConstantBuffers(1, 1, &null_constant_buffer);
       context->PSSetShaderResources(0, 1, &null_view);
     }
     context->IASetVertexBuffers(0, 1, vertex_buffer.GetAddressOf(), &stride, &offset);

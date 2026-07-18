@@ -14,6 +14,11 @@ enum class ReplayDrawKind : uint32_t {
   kProjectedTexturedTriangles = 2,
 };
 
+enum class ReplayPixelMode : uint32_t {
+  kTextureColor = 0,
+  kTextureColorLerpConstant = 1,
+};
+
 struct ReplayVertex {
   float x = 0.0f;
   float y = 0.0f;
@@ -25,6 +30,7 @@ struct ReplayVertex {
   float g = 1.0f;
   float b = 1.0f;
   float a = 1.0f;
+  float texture_lerp_factor = 1.0f;
   bool has_shared_shader_skin = false;
   float shared_shader_weight0 = 0.0f;
   float shared_shader_weight1 = 0.0f;
@@ -54,6 +60,8 @@ struct ReplayDraw {
   uint32_t vertex_stride_words = 0;
   uint32_t rt0_blendcontrol = 0x00010001;
   uint8_t rt0_write_mask = 0x0F;
+  ReplayPixelMode pixel_mode = ReplayPixelMode::kTextureColor;
+  std::array<float, 4> pixel_constant0 = {};
   std::vector<ReplayVertex> vertices;
   std::vector<uint32_t> indices;
   ReplayTexture texture;
