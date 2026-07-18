@@ -100,8 +100,12 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_include_transform_gaps` | `false` | Opt-in capture/replay for experimental gameplay transform-gap draw families. |
 | `sw2e_native_renderer_gpu_replay_transform_gaps_only` | `false` | Restricts replay capture to experimental transform-gap draws. |
 | `sw2e_native_renderer_gpu_replay_transform_gap_min_vertices` | `32` | Minimum decoded vertex count for projected transform-gap replay draws. |
+| `sw2e_native_renderer_gpu_replay_projected_min_indices` | `0` | Optional minimum expanded index count for projected transform-gap replay draws. |
+| `sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter` | empty | Optional hex vertex-shader hash filter for projected transform-gap replay. |
+| `sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter` | empty | Optional hex pixel-shader hash filter for projected transform-gap replay. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 | `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
+| `dump_shaders` | empty | ReXGlue GPU cvar. When set to a folder, ReXGlue writes analyzed shader ucode and translated shader files there. Use only in short focused probes. |
 
 Each `draw` line records frame/draw index, primitive type, index-buffer metadata, render-target
 register state, scissor/window state, active vertex/pixel shader hashes, shader microcode size,
@@ -796,6 +800,49 @@ but badly over/under-projected, which confirms the current heuristic is not the 
 The next renderer step is to recover the real shader transform semantics rather than relying on
 four-constant scoring alone.
 
+Focused projected-gap probes now support shader-hash and index-count filters. Validation
+`runtime.native-transform-probe-20260718-013024.log` used:
+
+```powershell
+.\run_recomp_native_transform_probe.ps1 `
+  -ProjectedGapReplay `
+  -ProjectedGapMode constant-fit `
+  -ProjectedVertexShader 0xED8D12865D27DEBF `
+  -ProjectedGapMinVertices 256 `
+  -ProjectedGapMinIndices 1000 `
+  -ReplayDrawLimit 8 `
+  -DurationSeconds 60 `
+  -InitialDelaySeconds 5
+```
+
+It exited with code `0`, kept `native_render_events=false`, touched no JSON event file, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-013024.bmp`. The log now
+records retained replay draws after pruning. The `ED8D12865D27DEBF / 7703E4142DFBD4D4` family
+recurs as two stable stride-12 indexed shapes: `845` vertices with `2415` expanded indices, and
+`1542` vertices with `2853` expanded indices. The resulting BMP is nonblank but collapses into a
+thin projected streak, proving the family is captured repeatably while also proving the current
+four-constant projection is not the real vertex transform.
+
+ReXGlue's built-in shader dump path is now wired into the same safe probe via `-DumpShaders`.
+Validation `runtime.native-transform-probe-20260718-013325.log` ran for `30` seconds with the same
+`ED8D12865D27DEBF` filter plus `-DumpShaders`. It exited with code `0`, kept event JSON off, wrote
+`180` shader dump files totaling about `1.7 MB`, and produced the target files:
+
+```text
+shader_ED8D12865D27DEBF.ucode.vert
+shader_45C4DDDAAA10F75F.ucode.vert
+shader_1A2E173CABDD3E80.ucode.vert
+shader_7703E4142DFBD4D4.ucode.frag
+```
+
+The `ED8D12865D27DEBF` and `45C4DDDAAA10F75F` vertex shaders share the same transform skeleton:
+they fetch the model position/UV, do indexed matrix work through `c[4+a0]`, `c[5+a0]`, and
+`c[6+a0]`, then export `oPos` through a final `c0..c3` projection block. The stride-10
+`1A2E173CABDD3E80` shader uses a different transform path with final constants `c3..c6` and object
+work through `c[7+a0]`, `c[8+a0]`, and `c[9+a0]`. This is the concrete reason the old heuristic
+was unstable: the final render path needs shader-specific transform evaluation and more constant
+coverage, not just brute-force four-row matrix scoring.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -809,11 +856,11 @@ work should proceed in this order:
 1. Replace the child-window live preview with ownership of the real game presenter/swap path for the
    title/menu pass once those families match the compatibility output.
 2. Handle the remaining depth/non-color title/menu output path under native render-target ownership.
-3. Capture and classify one gameplay/battle scene with the new `native_replay_support` summary,
-   including indexed vertex/index-buffer families. Compatible triangle strips can now be replayed;
-   the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts and shader
-   transforms rather than primitive expansion alone. Use gap-only samples and OBJ previews to keep
-   that work bounded and visually inspectable.
+3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
+   dumps. Compatible triangle strips can now be replayed; the remaining big gameplay gap is decoding
+   the stride-8/9/10 model vertex layouts, shader constants, and shader transforms rather than
+   primitive expansion alone. Use gap-only samples, OBJ previews, and ucode dumps to keep that work
+   bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 path: tiled textures,
    additional Xenos formats, mip tails, arrays, and render-target textures.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare

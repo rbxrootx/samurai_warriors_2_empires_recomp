@@ -469,6 +469,28 @@
   decode/upload, vertex/index-buffer extraction, shader/material replacement, render-target ownership,
   frame pacing, final presentation, and native AA before the compatibility renderer can be removed or
   bypassed for real gameplay.
+- Focused projected-gap replay now supports shader-hash filters and minimum expanded-index filters.
+  Validation `runtime.native-transform-probe-20260718-013024.log` exited with code `0`, kept
+  `native_render_events=false`, touched no event JSON, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-013024.bmp` while filtering
+  to `VS=0xED8D12865D27DEBF`. The retained draw log shows the target family is repeatable as two
+  stride-12 indexed shapes: `845` vertices / `2415` indices and `1542` vertices / `2853` indices.
+  The BMP is nonblank but collapses into a thin projected streak, so this is now a focused
+  transform-mapping target rather than a finished camera solve.
+- ReXGlue shader dumping is now available through `run_recomp_native_transform_probe.ps1
+  -DumpShaders`. Validation `runtime.native-transform-probe-20260718-013325.log` exited with code
+  `0`, kept event JSON off, and wrote `180` shader dump files totaling about `1.7 MB` under
+  `extracted\native_render_samples\shader_dumps_20260718-013325`. It captured ucode for the key
+  gameplay families: `shader_ED8D12865D27DEBF.ucode.vert`,
+  `shader_45C4DDDAAA10F75F.ucode.vert`, `shader_1A2E173CABDD3E80.ucode.vert`, and
+  `shader_7703E4142DFBD4D4.ucode.frag`.
+- Shader analysis explains the projection failure. `ED8D12865D27DEBF` and
+  `45C4DDDAAA10F75F` both fetch model position/UV, perform indexed transform work through
+  `c[4+a0]`, `c[5+a0]`, and `c[6+a0]`, and then write `oPos` through a final `c0..c3` block.
+  `1A2E173CABDD3E80` uses a different path with final `c3..c6` and object work through
+  `c[7+a0]..c[9+a0]`. The current event stream gives only compact constant snapshots, capped at
+  eight float4 constants per stage, so full native gameplay rendering needs shader-guided constant
+  capture/evaluation rather than the old arbitrary four-constant projection heuristic.
 
 ## Save And Storage Path
 

@@ -42,6 +42,9 @@ struct ReplayDraw {
   ReplayDrawKind kind = ReplayDrawKind::kTexturedTriangles;
   uint32_t frame = 0;
   uint32_t draw = 0;
+  uint64_t vertex_shader_hash = 0;
+  uint64_t pixel_shader_hash = 0;
+  uint32_t vertex_stride_words = 0;
   uint32_t rt0_blendcontrol = 0x00010001;
   uint8_t rt0_write_mask = 0x0F;
   std::vector<ReplayVertex> vertices;

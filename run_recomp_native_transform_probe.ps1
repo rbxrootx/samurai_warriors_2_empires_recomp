@@ -8,6 +8,10 @@ param(
   [switch]$ProjectedGapReplay,
   [int]$ReplayDrawLimit = 12,
   [int]$ProjectedGapMinVertices = 32,
+  [int]$ProjectedGapMinIndices = 0,
+  [string]$ProjectedVertexShader = "",
+  [string]$ProjectedPixelShader = "",
+  [switch]$DumpShaders,
   [ValidateSet("debug-fit", "constant", "constant-fit")]
   [string]$ProjectedGapMode = "debug-fit",
   [switch]$ExternalPulseInput,
@@ -33,6 +37,7 @@ $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $logFile = Join-Path $root "runtime.native-transform-probe-$timestamp.log"
 $sampleRoot = Join-Path $root "extracted\native_render_samples\native_gap_probe_$timestamp"
 $replayPath = Join-Path $root "extracted\native_render_samples\native_projected_gap_replay_$timestamp.bmp"
+$shaderDumpRoot = Join-Path $root "extracted\native_render_samples\shader_dumps_$timestamp"
 
 if (-not (Test-Path $exe)) {
   throw "Recomp executable was not found: $exe"
@@ -131,6 +136,7 @@ if ($ProjectedGapReplay) {
     "--sw2e_native_renderer_gpu_replay_include_transform_gaps=true",
     "--sw2e_native_renderer_gpu_replay_transform_gaps_only=true",
     "--sw2e_native_renderer_gpu_replay_transform_gap_min_vertices=$ProjectedGapMinVertices",
+    "--sw2e_native_renderer_gpu_replay_projected_min_indices=$ProjectedGapMinIndices",
     "--sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps=$projectedDebugFitArg",
     "--sw2e_native_renderer_gpu_replay_normalize_projected_gaps=$projectedNormalizeArg",
     "--sw2e_native_renderer_gpu_replay_draw_limit=$ReplayDrawLimit",
@@ -138,6 +144,16 @@ if ($ProjectedGapReplay) {
     "--sw2e_native_renderer_gpu_replay_live_present=false",
     "--sw2e_native_renderer_gpu_replay_suppress_backend_swap=false"
   )
+  if ($ProjectedVertexShader.Length -gt 0) {
+    $probeArgs += "--sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter=$ProjectedVertexShader"
+  }
+  if ($ProjectedPixelShader.Length -gt 0) {
+    $probeArgs += "--sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter=$ProjectedPixelShader"
+  }
+}
+
+if ($DumpShaders) {
+  $probeArgs += "--dump_shaders=$shaderDumpRoot"
 }
 
 $gameArgs = @(
@@ -291,6 +307,20 @@ if ($replayExists) {
   $replayBytes = (Get-Item $replayPath).Length
 }
 
+$shaderDumpFiles = @()
+$shaderDumpBytes = 0
+$interestingShaderDumps = @()
+if (Test-Path $shaderDumpRoot) {
+  $shaderDumpFiles = @(Get-ChildItem -Path $shaderDumpRoot -Recurse -File)
+  $shaderDumpBytes = ($shaderDumpFiles | Measure-Object -Property Length -Sum).Sum
+  $projectedVertexShaderPattern = $ProjectedVertexShader -replace '^0[xX]', ''
+  $projectedPixelShaderPattern = $ProjectedPixelShader -replace '^0[xX]', ''
+  $interestingShaderDumps = @($shaderDumpFiles | Where-Object {
+      ($projectedVertexShaderPattern.Length -gt 0 -and $_.Name -like "*$projectedVertexShaderPattern*") -or
+      ($projectedPixelShaderPattern.Length -gt 0 -and $_.Name -like "*$projectedPixelShaderPattern*")
+    } | Select-Object -ExpandProperty FullName)
+}
+
 $eventTouched = @()
 foreach ($candidate in $eventCandidates) {
   if (-not (Test-Path $candidate)) {
@@ -322,6 +352,13 @@ if ($process.HasExited) {
   SampleVertexConstantRows = $sampleVertexConstantRows
   SamplePixelConstantRows = $samplePixelConstantRows
   ProjectedGapMode = $(if ($ProjectedGapReplay) { $ProjectedGapMode } else { $null })
+  ProjectedVertexShader = $(if ($ProjectedGapReplay -and $ProjectedVertexShader.Length -gt 0) { $ProjectedVertexShader } else { $null })
+  ProjectedPixelShader = $(if ($ProjectedGapReplay -and $ProjectedPixelShader.Length -gt 0) { $ProjectedPixelShader } else { $null })
+  ProjectedGapMinIndices = $(if ($ProjectedGapReplay) { $ProjectedGapMinIndices } else { $null })
+  ShaderDumpRoot = $(if ($DumpShaders) { $shaderDumpRoot } else { $null })
+  ShaderDumpFiles = $shaderDumpFiles.Count
+  ShaderDumpBytes = $shaderDumpBytes
+  InterestingShaderDumps = $interestingShaderDumps
   ReplayPath = $(if ($ProjectedGapReplay) { $replayPath } else { $null })
   ReplayExists = $replayExists
   ReplayBytes = $replayBytes

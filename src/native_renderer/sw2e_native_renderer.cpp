@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
@@ -19,6 +20,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -103,6 +106,19 @@ REXCVAR_DEFINE_INT32(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices,
                      "SM2/Native Render",
                      "Minimum decoded vertices for projected transform-gap native replay draws")
     .range(3, 100000);
+
+REXCVAR_DEFINE_INT32(sw2e_native_renderer_gpu_replay_projected_min_indices, 0,
+                     "SM2/Native Render",
+                     "Minimum expanded indices for projected transform-gap native replay draws")
+    .range(0, 1000000);
+
+REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter, "",
+                      "SM2/Native Render",
+                      "Optional hex vertex-shader hash filter for projected transform-gap replay");
+
+REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter, "",
+                      "SM2/Native Render",
+                      "Optional hex pixel-shader hash filter for projected transform-gap replay");
 
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps, false,
                     "SM2/Native Render",
@@ -1025,6 +1041,18 @@ uint64_t NativeGpuReplayTextureBytesKey(const TextureFetchSummary& fetch,
   return key;
 }
 
+const char* NativeGpuReplayDrawKindName(gpu_replay::ReplayDrawKind kind) {
+  switch (kind) {
+    case gpu_replay::ReplayDrawKind::kTexturedTriangles:
+      return "textured";
+    case gpu_replay::ReplayDrawKind::kSolidTriangles:
+      return "solid";
+    case gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles:
+      return "projected";
+  }
+  return "unknown";
+}
+
 uint32_t NativeGpuReplayDrawScore(const gpu_replay::ReplayDraw& draw) {
   const uint32_t kind_score =
       draw.kind == gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles
@@ -1043,6 +1071,41 @@ uint32_t NativeGpuReplayPassScore(const std::vector<gpu_replay::ReplayDraw>& dra
     score = std::min<uint32_t>(score + NativeGpuReplayDrawScore(draw), UINT32_MAX - 1);
   }
   return score;
+}
+
+std::optional<uint64_t> ParseNativeGpuReplayHashFilter(std::string_view text) {
+  while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+    text.remove_prefix(1);
+  }
+  while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
+    text.remove_suffix(1);
+  }
+  if (text.empty()) {
+    return std::nullopt;
+  }
+  if (text.size() >= 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+    text.remove_prefix(2);
+  }
+  if (text.empty()) {
+    return std::nullopt;
+  }
+
+  uint64_t value = 0;
+  const char* begin = text.data();
+  const char* end = begin + text.size();
+  const auto result = std::from_chars(begin, end, value, 16);
+  if (result.ec != std::errc() || result.ptr != end) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+bool NativeGpuReplayHashFilterMatches(std::string_view filter_text, uint64_t actual_hash) {
+  if (filter_text.empty()) {
+    return true;
+  }
+  const std::optional<uint64_t> filter = ParseNativeGpuReplayHashFilter(filter_text);
+  return filter && *filter == actual_hash;
 }
 
 const VertexFetchSummary* FindNativeReplayTexturedVertexFetch(const DrawEvent& event) {
@@ -1245,13 +1308,19 @@ class Sidecar final : public EventSink {
     if (REXCVAR_GET(sw2e_native_renderer_gpu_replay)) {
       REXLOG_INFO(
           "SW2E native GPU replay enabled: draw_limit={} solid={} transform_gaps={} "
-          "transform_gaps_only={} transform_gap_min_vertices={} debug_fit={} "
-          "normalize_projected={} live_present={} output={}",
+          "transform_gaps_only={} transform_gap_min_vertices={} projected_min_indices={} "
+          "projected_vs_filter={} projected_ps_filter={} debug_fit={} normalize_projected={} "
+          "live_present={} output={}",
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_draw_limit),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_transform_gaps),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gaps_only),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_projected_min_indices),
+          std::string(REXCVAR_GET(
+              sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter)),
+          std::string(REXCVAR_GET(
+              sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter)),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_normalize_projected_gaps),
           REXCVAR_GET(sw2e_native_renderer_gpu_replay_live_present),
@@ -1539,6 +1608,9 @@ class Sidecar final : public EventSink {
     replay_draw.kind = gpu_replay::ReplayDrawKind::kTexturedTriangles;
     replay_draw.frame = event.frame_index;
     replay_draw.draw = event.draw_index;
+    replay_draw.vertex_shader_hash = event.vertex_shader_hash;
+    replay_draw.pixel_shader_hash = event.pixel_shader_hash;
+    replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     replay_draw.indices = std::move(indices);
@@ -1573,6 +1645,16 @@ class Sidecar final : public EventSink {
   bool CaptureNativeGpuReplayProjectedTransformGapDraw(const DrawEvent& event,
                                                        const DrawEventContext& context) {
     if (!REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_transform_gaps)) {
+      return false;
+    }
+    if (!NativeGpuReplayHashFilterMatches(
+            std::string_view(
+                REXCVAR_GET(sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter)),
+            event.vertex_shader_hash) ||
+        !NativeGpuReplayHashFilterMatches(
+            std::string_view(
+                REXCVAR_GET(sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter)),
+            event.pixel_shader_hash)) {
       return false;
     }
     const NativeReplaySupport replay_support = ClassifyNativeReplaySupport(event);
@@ -1627,6 +1709,16 @@ class Sidecar final : public EventSink {
       indices = std::move(triangle_indices);
     }
 
+    const uint32_t replay_index_count =
+        indices.empty() ? event.index_count : static_cast<uint32_t>(indices.size());
+    const int32_t min_projected_indices =
+        REXCVAR_GET(sw2e_native_renderer_gpu_replay_projected_min_indices);
+    if (min_projected_indices > 0 &&
+        replay_index_count < static_cast<uint32_t>(min_projected_indices)) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "min_indices", replay_support);
+    }
+
     const uint32_t vertex_count = event.indexed ? (max_index + 1) : event.index_count;
     const int32_t min_projected_vertices =
         REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices);
@@ -1654,6 +1746,9 @@ class Sidecar final : public EventSink {
     replay_draw.kind = gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles;
     replay_draw.frame = event.frame_index;
     replay_draw.draw = event.draw_index;
+    replay_draw.vertex_shader_hash = event.vertex_shader_hash;
+    replay_draw.pixel_shader_hash = event.pixel_shader_hash;
+    replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = 0x00010001;
     replay_draw.rt0_write_mask = 0x0F;
     replay_draw.indices = std::move(indices);
@@ -1804,6 +1899,9 @@ class Sidecar final : public EventSink {
     replay_draw.kind = gpu_replay::ReplayDrawKind::kSolidTriangles;
     replay_draw.frame = event.frame_index;
     replay_draw.draw = event.draw_index;
+    replay_draw.vertex_shader_hash = event.vertex_shader_hash;
+    replay_draw.pixel_shader_hash = event.pixel_shader_hash;
+    replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     if (event.primitive_type == 8) {
@@ -1839,6 +1937,22 @@ class Sidecar final : public EventSink {
       REXLOG_INFO("SW2E native GPU replay suppressing further per-draw capture logs");
     }
     ++native_gpu_replay_captured_draw_log_count_;
+  }
+
+  void LogNativeGpuReplayRetainedDraws(const std::vector<gpu_replay::ReplayDraw>& draws) const {
+    const size_t log_count = std::min<size_t>(draws.size(), 12);
+    for (size_t i = 0; i < log_count; ++i) {
+      const gpu_replay::ReplayDraw& draw = draws[i];
+      REXLOG_INFO(
+          "SW2E native GPU replay retained [{}] kind={} frame={} draw={} VS={:#018x} "
+          "PS={:#018x} stride_words={} vertices={} indices={} score={}",
+          i, NativeGpuReplayDrawKindName(draw.kind), draw.frame, draw.draw,
+          draw.vertex_shader_hash, draw.pixel_shader_hash, draw.vertex_stride_words,
+          draw.vertices.size(), draw.indices.size(), NativeGpuReplayDrawScore(draw));
+    }
+    if (draws.size() > log_count) {
+      REXLOG_INFO("SW2E native GPU replay retained {} additional draws", draws.size() - log_count);
+    }
   }
 
   void PruneNativeGpuReplayDrawsToLimit(size_t draw_limit) {
@@ -1897,6 +2011,7 @@ class Sidecar final : public EventSink {
           native_gpu_replay_completed_pass_count_, reason, completed_draw_count, first_draw.frame,
           last_draw.frame, first_draw.draw, last_draw.draw, native_gpu_replay_live_present_count_,
           owns_current_frame, suppress_current_backend_swap_, native_gpu_replay_best_completed_score_);
+      LogNativeGpuReplayRetainedDraws(native_gpu_replay_draws_);
     }
 
     native_gpu_replay_last_completed_draws_ = std::move(native_gpu_replay_draws_);

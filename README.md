@@ -106,7 +106,9 @@ Useful launchers:
 - `run_recomp_native_projected_gap_replay.bat` writes an opt-in native D3D11 debug BMP for selected
   gameplay transform-gap draws without enabling the large JSON event stream. Pass
   `-ProjectedGapMode constant-fit` to test the current constant-projection path with visibility
-  normalization, or `-ProjectedGapMode constant` for the strict unnormalized projection check.
+  normalization, or `-ProjectedGapMode constant` for the strict unnormalized projection check. The
+  underlying PowerShell probe also accepts `-ProjectedVertexShader`, `-ProjectedPixelShader`,
+  `-ProjectedGapMinIndices`, and `-DumpShaders` for focused shader-family analysis.
 
 ## Modding Direction
 
@@ -132,12 +134,13 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 - Decode linear BC3/DXT5 menu textures.
 - Replay supported title/menu textured and solid draw families through D3D11.
 - Replay selected gameplay transform-gap meshes through an experimental D3D11 debug-fit path.
+- Dump compact ReXGlue shader ucode files by hash during short no-JSON probes.
 - Keep the compatibility renderer as the reference path while native coverage grows.
 
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Map stride-8/9/10 vertex layouts, indexed triangle strips, and shader transforms.
+- Map stride-8/9/10 vertex layouts, indexed triangle strips, shader constants, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.
