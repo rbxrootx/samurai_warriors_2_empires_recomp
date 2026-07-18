@@ -8,6 +8,8 @@ param(
   [switch]$ProjectedGapReplay,
   [int]$ReplayDrawLimit = 12,
   [int]$ProjectedGapMinVertices = 32,
+  [ValidateSet("debug-fit", "constant", "constant-fit")]
+  [string]$ProjectedGapMode = "debug-fit",
   [switch]$ExternalPulseInput,
   [switch]$NoMoveWindow,
   [switch]$KeepOpen
@@ -120,12 +122,17 @@ if ($DumpGapSamples) {
 
 if ($ProjectedGapReplay) {
   $probeArgs = @($probeArgs | Where-Object { $_ -ne "--sw2e_native_renderer_gpu_replay=false" })
+  $projectedDebugFit = $ProjectedGapMode -eq "debug-fit"
+  $projectedNormalize = $ProjectedGapMode -eq "constant-fit"
+  $projectedDebugFitArg = $projectedDebugFit.ToString().ToLowerInvariant()
+  $projectedNormalizeArg = $projectedNormalize.ToString().ToLowerInvariant()
   $probeArgs += @(
     "--sw2e_native_renderer_gpu_replay=true",
     "--sw2e_native_renderer_gpu_replay_include_transform_gaps=true",
     "--sw2e_native_renderer_gpu_replay_transform_gaps_only=true",
     "--sw2e_native_renderer_gpu_replay_transform_gap_min_vertices=$ProjectedGapMinVertices",
-    "--sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps=true",
+    "--sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps=$projectedDebugFitArg",
+    "--sw2e_native_renderer_gpu_replay_normalize_projected_gaps=$projectedNormalizeArg",
     "--sw2e_native_renderer_gpu_replay_draw_limit=$ReplayDrawLimit",
     "--sw2e_native_renderer_gpu_replay_path=$replayPath",
     "--sw2e_native_renderer_gpu_replay_live_present=false",
@@ -314,6 +321,7 @@ if ($process.HasExited) {
   SampleSupportCounts = $sampleSupportCounts
   SampleVertexConstantRows = $sampleVertexConstantRows
   SamplePixelConstantRows = $samplePixelConstantRows
+  ProjectedGapMode = $(if ($ProjectedGapReplay) { $ProjectedGapMode } else { $null })
   ReplayPath = $(if ($ProjectedGapReplay) { $replayPath } else { $null })
   ReplayExists = $replayExists
   ReplayBytes = $replayBytes

@@ -397,6 +397,22 @@
   axes into visible clip space. It proves live gameplay mesh submission through native D3D11, but the
   real next renderer work is still constant mapping, vertex-shader transform replacement, depth and
   blend state, material translation, and render-target ownership.
+- Transform-gap replay now keeps the strongest projected gameplay draws until swap when
+  `transform_gaps_only=true`, rather than completing the native pass as soon as the first small draws
+  fill the draw limit. Ranking by projected kind, vertex count, and expanded index count keeps larger
+  gameplay draws such as frame `2850` draw `44` (`1542` vertices, `2853` indices) and frame `2885`
+  draw `151` (`854` vertices, `4611` indices).
+- `run_recomp_native_transform_probe.ps1` now accepts `-ProjectedGapMode debug-fit`,
+  `constant-fit`, or `constant`. `debug-fit` is the original raw-axis visibility scaffold;
+  `constant-fit` applies the current best captured constants and then normalizes projected XY for
+  visibility; `constant` is the strict unnormalized projection check. Validation
+  `runtime.native-transform-probe-20260718-011839.log` used `constant-fit`, kept JSON events off,
+  wrote `native_projected_gap_replay_20260718-011839.bmp`, and produced a `1280x720`, 32-bit BMP
+  with `78504` nonzero pixels, mean RGB `10.4241`, and max RGB `182`. Validation
+  `runtime.native-transform-probe-20260718-012011.log` used strict `constant`, also touched no event
+  JSON, and produced a visible but badly over/under-projected BMP with `170348` nonzero pixels and
+  mean RGB `22.5564`. That confirms the D3D11 path and draw prioritization are working, while the
+  real camera/shader transform is still unsolved.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

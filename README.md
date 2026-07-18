@@ -104,7 +104,9 @@ Useful launchers:
 - `run_recomp_native_gap_sample_probe.bat` captures a bounded gap-only `samples.jsonl` plus vertex,
   index, and texture bytes for unsupported native gameplay draws.
 - `run_recomp_native_projected_gap_replay.bat` writes an opt-in native D3D11 debug BMP for selected
-  gameplay transform-gap draws without enabling the large JSON event stream.
+  gameplay transform-gap draws without enabling the large JSON event stream. Pass
+  `-ProjectedGapMode constant-fit` to test the current constant-projection path with visibility
+  normalization, or `-ProjectedGapMode constant` for the strict unnormalized projection check.
 
 ## Modding Direction
 

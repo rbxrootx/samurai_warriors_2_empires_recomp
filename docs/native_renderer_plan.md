@@ -101,6 +101,7 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_transform_gaps_only` | `false` | Restricts replay capture to experimental transform-gap draws. |
 | `sw2e_native_renderer_gpu_replay_transform_gap_min_vertices` | `32` | Minimum decoded vertex count for projected transform-gap replay draws. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
+| `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
 
 Each `draw` line records frame/draw index, primitive type, index-buffer metadata, render-target
 register state, scissor/window state, active vertex/pixel shader hashes, shader microcode size,
@@ -770,6 +771,30 @@ large raw vertex-axis pair and fits it into clip space for inspection. That make
 and proves the D3D11 gameplay submission path, but it is not the final Xbox vertex-shader transform.
 The next step is to replace debug-fit with the real per-draw camera/model/projection constants,
 depth state, material shader replacement, and render-target ownership.
+
+Transform-gap replay now keeps the strongest projected gameplay draws until swap when
+`transform_gaps_only=true`, instead of completing the pass as soon as the first small draws fill the
+draw limit. The ranking favors projected draw kind, decoded vertex count, and expanded index count,
+so the output pass now retains larger gameplay meshes such as frame `2850` draw `44`
+(`1542` vertices, `2853` indices) and frame `2885` draw `151`
+(`854` vertices, `4611` indices).
+
+Validation `runtime.native-transform-probe-20260718-011839.log` used
+`-ProjectedGapMode constant-fit`, which applies the current best captured constants and then
+normalizes the projected XY bounds for visibility. It kept `native_render_events=false`, touched no
+event JSON, wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-011839.bmp`, and produced a
+`1280x720`, 32-bit BMP with `78504` nonzero pixels, mean RGB `10.4241`, and max RGB `182`. Visually
+that output is large projected gameplay geometry, not only the earlier raw-axis character debug-fit.
+
+Validation `runtime.native-transform-probe-20260718-012011.log` used
+`-ProjectedGapMode constant`, the strict unnormalized constant-projection path. It also exited with
+code `0`, touched no event JSON, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-012011.bmp`, a `1280x720`,
+32-bit BMP with `170348` nonzero pixels, mean RGB `22.5564`, and max RGB `182`. The image is visible
+but badly over/under-projected, which confirms the current heuristic is not the final camera solve.
+The next renderer step is to recover the real shader transform semantics rather than relying on
+four-constant scoring alone.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
