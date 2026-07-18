@@ -659,8 +659,22 @@
   assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
   `native_supported=1348`, `native_projected=598`, and unsupported buckets down to `0/5/1/0/78`,
   then wrote `extracted\native_render_samples\native_a395_projected_standard_20260718-052432.bmp`
-  using `1397` captured D3D11 draws. The current repeated transform blocker is
-  `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`, an indexed stride-9 attrs-2 family.
+  using `1397` captured D3D11 draws.
+- The indexed stride-9 `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4` projection family is now
+  promoted as `supported_projected_transform` behind an exact two-attribute layout gate. It uses the
+  shared ED8D/1C9E `c4..c6` skin block and `c0..c3` projection block with the observed default
+  weight/offset path; exact `b0/b1` branch and selector semantics remain a future accuracy target.
+  Focused validations `runtime.native-transform-probe-20260718-053139.log` and
+  `runtime.native-transform-probe-20260718-053607.log` exited `0`, kept event JSON off, and wrote
+  bounded replay BMPs for the fit and unnormalized paths. Standard validation
+  `runtime.native-45c4-projected-standard-20260718-054002.log` exited `0`, reported no
+  assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
+  `native_supported=1366`, `native_projected=616`, and unsupported buckets down to `0/5/1/0/61`,
+  then wrote `extracted\native_render_samples\native_45c4_projected_standard_20260718-054002.bmp`
+  using `1397` captured D3D11 draws. The BMP is pixel-identical to the A395 standard diagnostic
+  frame, so the promotion improves coverage without adding visible artifacts. The current repeated
+  transform blocker is `VS=0x6B722207E8ECA2B6 / PS=0xD10452A3E31F9C61`, an indexed stride-9 attrs-4
+  family; the repeated layout blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
 
 ## Save And Storage Path
 

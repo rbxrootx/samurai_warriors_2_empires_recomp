@@ -1123,10 +1123,34 @@ The replay wrote
 captured D3D11 draws. The matched `[error]` lines in that run were the known compatibility-backend
 resolve warnings.
 
-The next repeated transform blocker in the standard gameplay pass is now `VS=0x45C4DDDAAA10F75F` /
-`PS=0x7703E4142DFBD4D4`, an indexed stride-9 attrs-2 family whose samples alternate linear
-format-20 and tiled format-6 textures. The single indexed layout gap, five shape gaps, remaining
-transform families, and native render-target composition still block full native scene ownership.
+The indexed stride-9 `VS=0x45C4DDDAAA10F75F` / `PS=0x7703E4142DFBD4D4` family is now promoted as
+`supported_projected_transform` behind a strict layout gate: indexed triangle strips, stride `9`,
+two vertex attributes, position `fmt57@w0->t1i1`, and UV `fmt37@w7->t1i2`. The dumped ucode shares
+the ED8D/1C9E skeleton: `c[4+a0]..c[6+a0]` with the final `c0..c3` projection block. The current
+decode uses the observed zero-offset/default-weight path for standard coverage; the richer `b0/b1`
+branch and selector semantics remain a future accuracy target.
+
+Focused validations `runtime.native-transform-probe-20260718-053139.log` and
+`runtime.native-transform-probe-20260718-053607.log` exited `0`, kept event JSON off, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-053139.bmp` and
+`extracted\native_render_samples\native_projected_gap_replay_20260718-053607.bmp`. The fit run
+confirmed `finite=1.000` and `inside=1.000`; the unnormalized run showed the expected thin
+coverage-only pieces rather than a full scene. Standard no-JSON validation
+`runtime.native-45c4-projected-standard-20260718-054002.log` exited `0`, reported no assertion,
+fatal, crash, exception, or native replay failure lines, and reached repeated gameplay frames with
+`native_supported=1366`, `native_tex=728`, `native_solid=12`, `native_depth=10`,
+`native_projected=616`, and `unsupported_output(indexed/shape/layout/texture/transform)=0/5/1/0/61`.
+The replay wrote
+`extracted\native_render_samples\native_45c4_projected_standard_20260718-054002.bmp` using `1397`
+captured D3D11 draws. A pixel diff against the A395 standard BMP found `0` changed pixels, so this
+promotion improves coverage without changing the current diagnostic composition.
+
+The next repeated transform blocker in the standard gameplay pass is now `VS=0x6B722207E8ECA2B6` /
+`PS=0xD10452A3E31F9C61`, an indexed stride-9 attrs-4 family with attr signature
+`0xC2DF6189C13949AB`. The repeated layout blocker is still `VS=0x5A550226A224F581` /
+`PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single indexed layout gap, five
+shape gaps, remaining transform families, and native render-target composition still block full
+native scene ownership.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
@@ -1144,7 +1168,7 @@ work should proceed in this order:
    now replay into the native depth target, but real stencil ref/mask semantics and any additional
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
-   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, and A395 projected transform families can
+   dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, and 45C4 projected transform families can
    now be replayed; the remaining big gameplay gap is decoding the stride-8/9/10/11 model vertex
    layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
    gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually

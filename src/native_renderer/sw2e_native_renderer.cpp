@@ -1959,8 +1959,12 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0xA395C843676E6C8Dull &&
       event.pixel_shader_hash == 0x850DBBBA56015D1Aull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
+  const bool indexed_stride9_projected =
+      event.vertex_shader_hash == 0x45C4DDDAAA10F75Full &&
+      event.pixel_shader_hash == 0x7703E4142DFBD4D4ull && event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip;
   if ((!d5_projected && !indexed_stride11_projected && !character_stride11_projected &&
-       !a395_stride10_projected) ||
+       !a395_stride10_projected && !indexed_stride9_projected) ||
       !HasNativeReplayColorOutput(event) ||
       event.vertex_memexport_mask != 0 || event.pixel_memexport_mask != 0 ||
       HasVizQuerySideEffect(event) || !IsNativeReplayTexturedTriangleShape(event)) {
@@ -1977,6 +1981,24 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
   }
   if (a395_stride10_projected && vertex_fetch->stride_words != 10) {
     return false;
+  }
+  if (indexed_stride9_projected) {
+    const uint32_t attribute_count =
+        std::min(vertex_fetch->attribute_summary_count,
+                 rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+    if (vertex_fetch->stride_words != 9 || attribute_count != 2) {
+      return false;
+    }
+    const VertexAttributeSummary& position_attribute = vertex_fetch->attributes[0];
+    const VertexAttributeSummary& texcoord_attribute = vertex_fetch->attributes[1];
+    if (position_attribute.data_format != kXenosVertexFormat32_32_32Float ||
+        position_attribute.offset_words != 0 || position_attribute.result_storage_target != 1 ||
+        position_attribute.result_storage_index != 1 ||
+        texcoord_attribute.data_format != kXenosVertexFormat32_32Float ||
+        texcoord_attribute.offset_words != 7 || texcoord_attribute.result_storage_target != 1 ||
+        texcoord_attribute.result_storage_index != 2) {
+      return false;
+    }
   }
 
   std::optional<TextureDumpPlan> texture_plan;
