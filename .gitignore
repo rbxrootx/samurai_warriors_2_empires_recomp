@@ -1,0 +1,79 @@
+# Build output
+/out/
+/build/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.ninja
+*.ilk
+*.pdb
+*.obj
+*.o
+*.lib
+*.exp
+*.exe
+*.dll
+
+# IDE/user state
+/.vs/
+/.vscode/
+/.idea/
+launch.vs.json
+CMakeUserPresets.json
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Runtime logs and crash/debug captures
+*.log
+*.dmp
+*.mdmp
+*.trace
+*.xtr
+*.jsonl
+
+# Root-level ad-hoc screenshots/captures from local testing.
+# Project assets live under /assets and are intentionally not ignored.
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+/*.gif
+/screenshots/
+/captures/
+
+# Large extracted/rebuilt analysis artifacts
+/artifacts/
+/extracted/
+/traces/
+/tmp/
+/temp/
+
+# Local game data and proprietary binaries/assets
+/game_files/
+/iso/
+/isos/
+*.iso
+*.xex
+*.xexp
+*.xcp
+*.xbe
+*.wmv
+LINKDATA_BNS.*
+LINKDATA_*.*
+
+# Local mod output. Keep the loose-mod README, ignore payloads.
+/mods/loose/*
+!/mods/loose/README.md
+
+# OS clutter
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Python/tool caches
+__pycache__/
+*.py[cod]
