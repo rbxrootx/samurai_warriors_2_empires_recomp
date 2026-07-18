@@ -648,8 +648,19 @@
   frames with `native_supported=1309`, `native_projected=559`, and unsupported buckets down to
   `0/5/1/0/117`, then wrote
   `extracted\native_render_samples\native_1b2e_projected_standard_20260718-050931.bmp` using `1388`
-  captured D3D11 draws. The current repeated transform blocker is
-  `VS=0xA395C843676E6C8D / PS=0x850DBBBA56015D1A`, an indexed stride-10 attrs-5 family.
+  captured D3D11 draws.
+- The indexed stride-10 `VS=0xA395C843676E6C8D / PS=0x850DBBBA56015D1A` projection family is now
+  promoted as `supported_projected_transform`. Its ucode uses one packed palette byte, skins through
+  `c[13+a0]..c[15+a0]`, reorders the skinned source, and projects through `c9..c12`. Focused
+  validation `runtime.native-transform-probe-20260718-052248.log` exited `0`, reached
+  `finite=1.000` and `inside=1.000`, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-052248.bmp`. Standard
+  validation `runtime.native-a395-projected-standard-20260718-052432.log` exited `0`, reported no
+  assertion/fatal/crash/exception/native-replay-failure lines, reached repeated gameplay frames with
+  `native_supported=1348`, `native_projected=598`, and unsupported buckets down to `0/5/1/0/78`,
+  then wrote `extracted\native_render_samples\native_a395_projected_standard_20260718-052432.bmp`
+  using `1397` captured D3D11 draws. The current repeated transform blocker is
+  `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`, an indexed stride-9 attrs-2 family.
 
 ## Save And Storage Path
 
