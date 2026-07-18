@@ -18,6 +18,8 @@
 
 REXCVAR_DEFINE_BOOL(sw2e_auto_boot_input, false, "SM2/Input",
                     "Synthesize Start/A during startup for unattended smoke tests");
+REXCVAR_DEFINE_BOOL(sw2e_auto_probe_input, false, "SM2/Input",
+                    "Synthesize bounded Start/A menu input after startup for renderer probes");
 
 namespace rex::kernel::xam {
 u32 XamInputGetState_entry(u32 user_index, u32 flags,
@@ -128,6 +130,7 @@ std::atomic_bool g_storage_device_seeded{};
 std::atomic_uint32_t g_boot_input_stage{};
 std::atomic_uint32_t g_post_storage_input_calls{};
 std::atomic_bool g_post_storage_input_done_logged{};
+std::atomic_uint32_t g_probe_input_calls{};
 
 bool ShouldLogImportCall(std::atomic_uint32_t& hits) {
   const uint32_t hit = hits.fetch_add(1, std::memory_order_relaxed);
@@ -493,6 +496,30 @@ uint16_t BootInputButtons(uint32_t call_index) {
   return 0;
 }
 
+uint16_t ProbeInputButtons() {
+  if (!REXCVAR_GET(sw2e_auto_probe_input)) {
+    return 0;
+  }
+
+  if (REXCVAR_GET(sw2e_auto_boot_input) &&
+      g_boot_input_stage.load(std::memory_order_relaxed) != 2) {
+    return 0;
+  }
+
+  const uint32_t call_index = g_probe_input_calls.fetch_add(1, std::memory_order_relaxed);
+  if (call_index >= 5400) {
+    return 0;
+  }
+
+  if (call_index < 360) {
+    const uint32_t phase = call_index % 60;
+    return phase >= 6 && phase < 18 ? kXInputGamepadStart : 0;
+  }
+
+  const uint32_t phase = call_index % 45;
+  return phase >= 4 && phase < 14 ? kXInputGamepadA : 0;
+}
+
 bool BootKeystroke(uint32_t call_index, uint16_t& virtual_key, uint16_t& flags) {
   if (!REXCVAR_GET(sw2e_auto_boot_input)) {
     return false;
@@ -594,8 +621,11 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
       user_index == 0 && REXCVAR_GET(sw2e_auto_boot_input)
           ? sw2e::hooks::BootInputButtons(user0_call_index)
           : 0;
+  const uint16_t probe_buttons =
+      user_index == 0 ? sw2e::hooks::ProbeInputButtons() : 0;
+  const uint16_t merged_synthetic_buttons = buttons | probe_buttons;
 
-  if (buttons != 0 && state_addr != 0) {
+  if (merged_synthetic_buttons != 0 && state_addr != 0) {
     if (result != sw2e::hooks::kXErrorSuccess) {
       REX_STORE_U32(state_addr + 0, user0_call_index + 1);
       REX_STORE_U16(state_addr + 4, 0);
@@ -609,11 +639,21 @@ extern "C" REX_FUNC(__imp__XamInputGetState) {
     }
 
     REX_STORE_U32(state_addr + 0, user0_call_index + 1);
-    const uint16_t merged_buttons = REX_LOAD_U16(state_addr + 4) | buttons;
+    const uint16_t merged_buttons = REX_LOAD_U16(state_addr + 4) | merged_synthetic_buttons;
     REX_STORE_U16(state_addr + 4, merged_buttons);
   }
 
-  if (buttons != 0) {
+  if (probe_buttons != 0) {
+    const uint32_t probe_call = sw2e::hooks::g_probe_input_calls.load(std::memory_order_relaxed);
+    const uint32_t phase = probe_call % 45;
+    const bool should_log = probe_call < 420 || phase == 5;
+    if (should_log) {
+      REXLOG_INFO(
+          "SM2 synthetic probe input pulse: XamInputGetState user={} user0-call #{} "
+          "probe-call #{} buttons={:#06x}",
+          user_index, user0_call_index + 1, probe_call, probe_buttons);
+    }
+  } else if (buttons != 0) {
     const uint32_t stage = sw2e::hooks::g_boot_input_stage.load(std::memory_order_relaxed);
     const uint32_t phase =
         stage == 1 ? sw2e::hooks::g_post_storage_input_calls.load(std::memory_order_relaxed) % 120

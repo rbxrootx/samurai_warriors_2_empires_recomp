@@ -45,6 +45,12 @@ storage selector. Synthetic Start/A input is now off for normal play. Launch wit
 `--sw2e_auto_boot_input=true` only for unattended smoke tests that need to advance past startup
 prompts without touching the window.
 
+`--sw2e_auto_probe_input=true` is a second, false-by-default smoke/probe helper. It waits until the
+boot/storage helper reaches its done stage, then injects bounded Start/A pulses directly through the
+`XamInputGetState` hook. `run_recomp_native_transform_probe.bat` uses this path instead of external
+keyboard automation, so renderer probes do not steal focus, move the user's mouse, or leave host
+keys pressed.
+
 Mouse/keyboard support is enabled through ReXGlue MnK controller emulation, not generated recomp
 code. `run_recomp.bat` and `launch.vs.json` now use the gameplay layout below:
 

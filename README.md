@@ -96,6 +96,8 @@ Useful launchers:
 - `run_recomp_native_events.bat` enables bounded native-render event capture.
 - `run_recomp_native_gameplay_capture.bat` keeps giant JSON logs off by default and captures bounded
   priority samples for indexed, strip, model-layout, and multi-texture gameplay draws.
+- `run_recomp_native_transform_probe.bat` runs a muted, timed gameplay probe with JSON events off and
+  reports concise `SW2E native transform gap` lines for the next native-renderer work.
 
 ## Modding Direction
 

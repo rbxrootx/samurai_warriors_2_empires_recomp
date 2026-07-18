@@ -622,6 +622,68 @@ title-screen BMP
 (`1280x720`, mean `0.675269`). The title path has no transform gaps, so the extra line stayed quiet
 there.
 
+For unattended gameplay evidence, use:
+
+```powershell
+.\run_recomp_native_transform_probe.bat
+```
+
+The probe launches muted, moves the window to a non-primary monitor when available, enables bounded
+runtime synthetic Start/A through `--sw2e_auto_probe_input=true`, keeps `native_render_events=false`,
+disables sample dumping and GPU replay, then closes the process after the requested duration. Its
+summary prints the log path, whether any JSON event file was touched, first native frame summaries,
+problem lines, and up to six `SW2E native transform gap` lines. This is the preferred next-step
+capture for native gameplay rendering because it targets shader-transform/layout evidence without
+external keyboard automation or multi-GB JSON.
+
+The first 75-second probe with OS-level key pulses did not reach gameplay because the game-side
+`XamInputGetState` heartbeat stayed at `buttons=0` after the boot helper finished. It still verified
+the log path and no-JSON behavior: `runtime.native-transform-probe-20260717-235343.log` recorded
+`4256` native sidecar frame summaries, no transform gaps, no indexed draws, and no event JSON writes.
+
+Validation `runtime.native-transform-probe-20260718-000127.log` rebuilt cleanly and exited with code
+`0`. It kept `native_render_events=false`, touched no JSON event file, and used direct
+`XamInputGetState` probe pulses. That run recorded `3103` native sidecar frame summaries, including
+`1466` gameplay-class frames with indexed draws. The first indexed gameplay frame had `1477` total
+draws, `282` indexed draws, `1453` vertex-fetch draws, `1424` texture-fetch draws, and unsupported
+output buckets:
+
+```text
+unsupported_output(indexed/shape/layout/texture/transform)=0/5/729/0/677
+```
+
+The top transform-gap family was stable across all `1466` transform-gap lines:
+
+```text
+prim=6 indexed=false VS=0xd5ccd0c915ddcc0b PS=0x7b81c162cba6d195
+vfetch_c=95 stride_words=9 attrs=4 attr_sig=0x5d8c9d1f8fea13a1
+a0=fmt57@w0->t1i7m15u7s2696 a1=fmt57@w3->t1i4m7u7s2184
+a2=fmt6@w6->t1i1m15u15s90 a3=fmt37@w7->t1i0m3u3s2312
+tfetches=5 tex0_format=20 tex0_dim=1 tex0_tiled=0
+```
+
+This is likely model-space gameplay geometry: two 3-float attributes at word offsets `0` and `3`,
+one packed/unknown attribute at word offset `6`, and one 2-float attribute at word offset `7`.
+The next native renderer implementation step is to decode this stride-9 family through shader
+constants/model-view-projection instead of forcing it through the current screen-space menu path.
+
+The same compact logger now covers layout gaps. Validation
+`runtime.native-transform-probe-20260718-000517.log` kept `native_render_events=false`, touched no
+JSON event file, reached `Execution complete`, and recorded `3135` native sidecar summaries. It found
+`1466` transform-gap lines and `1466` layout-gap lines. The top layout family was:
+
+```text
+prim=6 indexed=false VS=0xde7f9af93c668314 PS=0x8cbad34fce165328
+vfetch_c=95 stride_words=1 attrs=1 attr_sig=0x07e7aa1e6ddfa9a7
+a0=fmt36@w0->t1i0m1u1s2336
+tfetches=1 tex0_format=20 tex0_dim=1 tex0_tiled=0
+```
+
+That looks like a point/strip-driven textured effect or particle-style gameplay family rather than
+the main stage mesh layout. The priority order is now: decode the stride-9 transform family for
+model-space geometry, then classify whether the stride-1 layout family is effects, billboards, or
+another non-mesh pass.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the

@@ -26,6 +26,9 @@
   longer blocks the working boot/gameplay path.
 - Synthetic boot input is now opt-in via `--sw2e_auto_boot_input=true`. Normal play no longer
   injects Start/A after launch; smoke tests can still enable the old startup helper when needed.
+- Synthetic gameplay probe input is also opt-in via `--sw2e_auto_probe_input=true`. It injects
+  bounded Start/A directly through the `XamInputGetState` hook after the boot helper finishes, which
+  avoids external keyboard/mouse automation during renderer probes.
 - The draw packet hooks in `src/hooks/runtime_hooks.cpp` skip stale transient command cursors before
   they write into read-only guest pages. These are project-layer hooks, not generated-code edits.
 - Full native rendering is tracked in `docs/native_renderer_plan.md`. The current tools for that
@@ -332,6 +335,27 @@
   `out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_transform_topgap_20260717-234514.bmp`
   (`1280x720`, mean `0.675269`). The title path has no transform gaps, so no extra transform-gap
   line was emitted there; the new line should appear only on frames that actually hit that gap.
+- `run_recomp_native_transform_probe.bat` is now the preferred no-JSON gameplay renderer probe. It
+  launches muted, uses runtime synthetic Start/A rather than host keyboard automation, closes itself,
+  and reports the first frame summaries and top transform-gap lines. Validation
+  `runtime.native-transform-probe-20260718-000127.log` exited with code `0`, touched no JSON event
+  file, and recorded `3103` native sidecar frames. `1466` frames had indexed gameplay-class work; the
+  first such frame had `1477` draws, `282` indexed draws, and
+  `unsupported_output(indexed/shape/layout/texture/transform)=0/5/729/0/677`. The dominant
+  transform-gap family was `prim=6`, `indexed=false`, `VS=0xd5ccd0c915ddcc0b`,
+  `PS=0x7b81c162cba6d195`, `vfetch_c=95`, `stride_words=9`, `attrs=4`,
+  `attr_sig=0x5d8c9d1f8fea13a1`, with attributes `fmt57@w0`, `fmt57@w3`, `fmt6@w6`, and
+  `fmt37@w7`, plus five texture fetches with first texture format `20`. This is the first concise
+  live gameplay-layout target for model-space native rendering without multi-GB event logs.
+- The sidecar now emits matching `SW2E native layout gap` lines. Validation
+  `runtime.native-transform-probe-20260718-000517.log` kept JSON events off, reached
+  `Execution complete`, and recorded `3135` native sidecar frames, `1466` transform-gap lines, and
+  `1466` layout-gap lines. The top layout family is `prim=6`, `indexed=false`,
+  `VS=0xde7f9af93c668314`, `PS=0x8cbad34fce165328`, `vfetch_c=95`, `stride_words=1`,
+  `attrs=1`, `attr_sig=0x07e7aa1e6ddfa9a7`, `a0=fmt36@w0->t1i0m1u1s2336`, one texture fetch, and
+  first texture format `20`. Treat this as an effects/billboard-style candidate until correlated
+  with asset loads or screen captures; the stride-9 transform family remains the main native 3D
+  geometry target.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

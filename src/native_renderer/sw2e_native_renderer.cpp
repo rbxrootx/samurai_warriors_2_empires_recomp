@@ -104,18 +104,34 @@ struct ShaderPairCounter {
   uint32_t draws = 0;
 };
 
+struct TransformGapAttribute {
+  uint32_t data_format = 0;
+  int32_t offset_words = 0;
+  int32_t exp_adjust = 0;
+  uint32_t result_storage_target = 0;
+  uint32_t result_storage_index = 0;
+  uint32_t result_write_mask = 0;
+  uint32_t result_used_components = 0;
+  uint32_t result_swizzle = 0;
+  bool is_signed = false;
+  bool is_integer = false;
+};
+
 struct TransformGapCounter {
   uint64_t vertex_hash = 0;
   uint64_t pixel_hash = 0;
+  uint64_t attribute_signature_hash = 0;
   uint32_t primitive_type = 0;
   bool indexed = false;
   uint32_t fetch_constant = 0;
   uint32_t stride_words = 0;
   uint32_t attribute_count = 0;
+  uint32_t recorded_attribute_count = 0;
   uint32_t texture_fetch_count = 0;
   uint32_t first_texture_format = 0;
   uint32_t first_texture_dimension = 0;
   uint32_t first_texture_tiled = 0;
+  std::array<TransformGapAttribute, 4> attributes = {};
   uint32_t draws = 0;
 };
 
@@ -160,7 +176,9 @@ struct FrameStats {
   uint64_t index_memory_hash = 0;
   std::array<ShaderPairCounter, 16> shader_pairs = {};
   std::array<TransformGapCounter, 8> transform_gaps = {};
+  std::array<TransformGapCounter, 8> layout_gaps = {};
   uint32_t other_transform_gap_draws = 0;
+  uint32_t other_layout_gap_draws = 0;
 };
 
 void ResetFrame(FrameStats& stats, uint32_t frame_index) {
@@ -554,6 +572,39 @@ void MixHash(uint64_t& target, uint64_t hash) {
   target ^= hash + 0x9E3779B97F4A7C15ull + (target << 6) + (target >> 2);
 }
 
+uint64_t TransformGapAttributeSignature(const VertexFetchSummary& fetch) {
+  uint64_t signature = 0;
+  const uint32_t attribute_count =
+      std::min(fetch.attribute_summary_count,
+               rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+  MixHash(signature, fetch.stride_words);
+  MixHash(signature, attribute_count);
+  for (uint32_t i = 0; i < attribute_count; ++i) {
+    const VertexAttributeSummary& attribute = fetch.attributes[i];
+    MixHash(signature, attribute.data_format);
+    MixHash(signature, static_cast<uint32_t>(attribute.offset_words));
+    MixHash(signature, static_cast<uint32_t>(attribute.exp_adjust));
+    MixHash(signature, attribute.is_signed ? 1 : 2);
+    MixHash(signature, attribute.is_integer ? 3 : 4);
+    MixHash(signature, attribute.result_storage_target);
+    MixHash(signature, attribute.result_storage_index);
+    MixHash(signature, attribute.result_write_mask);
+    MixHash(signature, attribute.result_used_components);
+    MixHash(signature, attribute.result_swizzle);
+  }
+  return signature;
+}
+
+const VertexFetchSummary* FirstUsefulVertexFetch(const DrawEvent& event) {
+  for (uint32_t i = 0; i < event.vertex_fetch_summary_count; ++i) {
+    const auto& candidate = event.vertex_fetches[i];
+    if (candidate.attribute_summary_count != 0) {
+      return &candidate;
+    }
+  }
+  return event.vertex_fetch_summary_count != 0 ? &event.vertex_fetches[0] : nullptr;
+}
+
 uint64_t SampleKey(uint32_t address, uint32_t size, uint64_t hash, char kind) {
   uint64_t key = hash;
   key ^= uint64_t(address) << 32;
@@ -928,6 +979,8 @@ class Sidecar final : public EventSink {
     }
     if (replay_support == NativeReplaySupport::kUnsupportedTransform) {
       CountTransformGap(event);
+    } else if (replay_support == NativeReplaySupport::kUnsupportedLayout) {
+      CountLayoutGap(event);
     }
     stats_.vertex_fetch_count += event.vertex_fetch_summary_count;
     stats_.texture_fetch_count += event.texture_fetch_summary_count;
@@ -1316,12 +1369,14 @@ class Sidecar final : public EventSink {
 
     const TextureFetchSummary* texture =
         event.texture_fetch_summary_count != 0 ? &event.texture_fetches[0] : nullptr;
+    const uint64_t attribute_signature_hash = TransformGapAttributeSignature(*fetch);
     TransformGapCounter* empty_slot = nullptr;
     for (auto& gap : stats_.transform_gaps) {
       if (gap.draws != 0 && gap.vertex_hash == event.vertex_shader_hash &&
           gap.pixel_hash == event.pixel_shader_hash && gap.primitive_type == event.primitive_type &&
           gap.indexed == event.indexed && gap.fetch_constant == fetch->fetch_constant &&
           gap.stride_words == fetch->stride_words && gap.attribute_count == fetch->attribute_count &&
+          gap.attribute_signature_hash == attribute_signature_hash &&
           gap.texture_fetch_count == event.texture_fetch_summary_count &&
           gap.first_texture_format == (texture ? texture->format : 0) &&
           gap.first_texture_dimension == (texture ? texture->dimension : 0) &&
@@ -1337,11 +1392,28 @@ class Sidecar final : public EventSink {
     if (empty_slot) {
       empty_slot->vertex_hash = event.vertex_shader_hash;
       empty_slot->pixel_hash = event.pixel_shader_hash;
+      empty_slot->attribute_signature_hash = attribute_signature_hash;
       empty_slot->primitive_type = event.primitive_type;
       empty_slot->indexed = event.indexed;
       empty_slot->fetch_constant = fetch->fetch_constant;
       empty_slot->stride_words = fetch->stride_words;
       empty_slot->attribute_count = fetch->attribute_count;
+      empty_slot->recorded_attribute_count =
+          std::min<uint32_t>(fetch->attribute_summary_count, empty_slot->attributes.size());
+      for (uint32_t i = 0; i < empty_slot->recorded_attribute_count; ++i) {
+        const VertexAttributeSummary& source = fetch->attributes[i];
+        TransformGapAttribute& destination = empty_slot->attributes[i];
+        destination.data_format = source.data_format;
+        destination.offset_words = source.offset_words;
+        destination.exp_adjust = source.exp_adjust;
+        destination.result_storage_target = source.result_storage_target;
+        destination.result_storage_index = source.result_storage_index;
+        destination.result_write_mask = source.result_write_mask;
+        destination.result_used_components = source.result_used_components;
+        destination.result_swizzle = source.result_swizzle;
+        destination.is_signed = source.is_signed;
+        destination.is_integer = source.is_integer;
+      }
       empty_slot->texture_fetch_count = event.texture_fetch_summary_count;
       empty_slot->first_texture_format = texture ? texture->format : 0;
       empty_slot->first_texture_dimension = texture ? texture->dimension : 0;
@@ -1351,6 +1423,72 @@ class Sidecar final : public EventSink {
     }
 
     ++stats_.other_transform_gap_draws;
+  }
+
+  void CountLayoutGap(const DrawEvent& event) {
+    const VertexFetchSummary* fetch = FirstUsefulVertexFetch(event);
+    const TextureFetchSummary* texture =
+        event.texture_fetch_summary_count != 0 ? &event.texture_fetches[0] : nullptr;
+    const uint64_t attribute_signature_hash = fetch ? TransformGapAttributeSignature(*fetch) : 0;
+    const uint32_t fetch_constant = fetch ? fetch->fetch_constant : UINT32_MAX;
+    const uint32_t stride_words = fetch ? fetch->stride_words : 0;
+    const uint32_t attribute_count = fetch ? fetch->attribute_count : 0;
+
+    TransformGapCounter* empty_slot = nullptr;
+    for (auto& gap : stats_.layout_gaps) {
+      if (gap.draws != 0 && gap.vertex_hash == event.vertex_shader_hash &&
+          gap.pixel_hash == event.pixel_shader_hash && gap.primitive_type == event.primitive_type &&
+          gap.indexed == event.indexed && gap.fetch_constant == fetch_constant &&
+          gap.stride_words == stride_words && gap.attribute_count == attribute_count &&
+          gap.attribute_signature_hash == attribute_signature_hash &&
+          gap.texture_fetch_count == event.texture_fetch_summary_count &&
+          gap.first_texture_format == (texture ? texture->format : 0) &&
+          gap.first_texture_dimension == (texture ? texture->dimension : 0) &&
+          gap.first_texture_tiled == (texture ? texture->tiled : 0)) {
+        ++gap.draws;
+        return;
+      }
+      if (gap.draws == 0 && !empty_slot) {
+        empty_slot = &gap;
+      }
+    }
+
+    if (empty_slot) {
+      empty_slot->vertex_hash = event.vertex_shader_hash;
+      empty_slot->pixel_hash = event.pixel_shader_hash;
+      empty_slot->attribute_signature_hash = attribute_signature_hash;
+      empty_slot->primitive_type = event.primitive_type;
+      empty_slot->indexed = event.indexed;
+      empty_slot->fetch_constant = fetch_constant;
+      empty_slot->stride_words = stride_words;
+      empty_slot->attribute_count = attribute_count;
+      if (fetch) {
+        empty_slot->recorded_attribute_count =
+            std::min<uint32_t>(fetch->attribute_summary_count, empty_slot->attributes.size());
+        for (uint32_t i = 0; i < empty_slot->recorded_attribute_count; ++i) {
+          const VertexAttributeSummary& source = fetch->attributes[i];
+          TransformGapAttribute& destination = empty_slot->attributes[i];
+          destination.data_format = source.data_format;
+          destination.offset_words = source.offset_words;
+          destination.exp_adjust = source.exp_adjust;
+          destination.result_storage_target = source.result_storage_target;
+          destination.result_storage_index = source.result_storage_index;
+          destination.result_write_mask = source.result_write_mask;
+          destination.result_used_components = source.result_used_components;
+          destination.result_swizzle = source.result_swizzle;
+          destination.is_signed = source.is_signed;
+          destination.is_integer = source.is_integer;
+        }
+      }
+      empty_slot->texture_fetch_count = event.texture_fetch_summary_count;
+      empty_slot->first_texture_format = texture ? texture->format : 0;
+      empty_slot->first_texture_dimension = texture ? texture->dimension : 0;
+      empty_slot->first_texture_tiled = texture ? texture->tiled : 0;
+      empty_slot->draws = 1;
+      return;
+    }
+
+    ++stats_.other_layout_gap_draws;
   }
 
   void HashGuestMemorySamples(const DrawEvent& event, const DrawEventContext& context) {
@@ -1627,9 +1765,9 @@ class Sidecar final : public EventSink {
     return top;
   }
 
-  const TransformGapCounter* TopTransformGap() const {
+  const TransformGapCounter* TopGap(const std::array<TransformGapCounter, 8>& gaps) const {
     const TransformGapCounter* top = nullptr;
-    for (const auto& gap : stats_.transform_gaps) {
+    for (const auto& gap : gaps) {
       if (gap.draws == 0) {
         continue;
       }
@@ -1640,20 +1778,45 @@ class Sidecar final : public EventSink {
     return top;
   }
 
-  void LogTopTransformGap(const SwapEvent& event) const {
-    const TransformGapCounter* gap = TopTransformGap();
+  void LogReplayGap(const SwapEvent& event, const TransformGapCounter* gap, const char* kind,
+                    uint32_t other_draws) const {
     if (!gap) {
       return;
     }
 
     REXLOG_INFO(
-        "SW2E native transform gap frame {}: draws={} other={} prim={} indexed={} "
-        "VS={:#018x} PS={:#018x} vfetch_c={} stride_words={} attrs={} "
+        "SW2E native {} gap frame {}: draws={} other={} prim={} indexed={} "
+        "VS={:#018x} PS={:#018x} vfetch_c={} stride_words={} attrs={} attr_sig={:#018x} "
+        "a0=fmt{}@w{}->t{}i{}m{}u{}s{} a1=fmt{}@w{}->t{}i{}m{}u{}s{} "
+        "a2=fmt{}@w{}->t{}i{}m{}u{}s{} a3=fmt{}@w{}->t{}i{}m{}u{}s{} "
         "tfetches={} tex0_format={} tex0_dim={} tex0_tiled={}",
-        event.frame_index, gap->draws, stats_.other_transform_gap_draws, gap->primitive_type,
-        gap->indexed, gap->vertex_hash, gap->pixel_hash, gap->fetch_constant,
-        gap->stride_words, gap->attribute_count, gap->texture_fetch_count,
+        kind, event.frame_index, gap->draws, other_draws, gap->primitive_type, gap->indexed,
+        gap->vertex_hash, gap->pixel_hash, gap->fetch_constant,
+        gap->stride_words, gap->attribute_count, gap->attribute_signature_hash,
+        gap->attributes[0].data_format, gap->attributes[0].offset_words,
+        gap->attributes[0].result_storage_target, gap->attributes[0].result_storage_index,
+        gap->attributes[0].result_write_mask, gap->attributes[0].result_used_components,
+        gap->attributes[0].result_swizzle, gap->attributes[1].data_format,
+        gap->attributes[1].offset_words, gap->attributes[1].result_storage_target,
+        gap->attributes[1].result_storage_index, gap->attributes[1].result_write_mask,
+        gap->attributes[1].result_used_components, gap->attributes[1].result_swizzle,
+        gap->attributes[2].data_format, gap->attributes[2].offset_words,
+        gap->attributes[2].result_storage_target, gap->attributes[2].result_storage_index,
+        gap->attributes[2].result_write_mask, gap->attributes[2].result_used_components,
+        gap->attributes[2].result_swizzle, gap->attributes[3].data_format,
+        gap->attributes[3].offset_words, gap->attributes[3].result_storage_target,
+        gap->attributes[3].result_storage_index, gap->attributes[3].result_write_mask,
+        gap->attributes[3].result_used_components, gap->attributes[3].result_swizzle,
+        gap->texture_fetch_count,
         gap->first_texture_format, gap->first_texture_dimension, gap->first_texture_tiled);
+  }
+
+  void LogTopTransformGap(const SwapEvent& event) const {
+    LogReplayGap(event, TopGap(stats_.transform_gaps), "transform", stats_.other_transform_gap_draws);
+  }
+
+  void LogTopLayoutGap(const SwapEvent& event) const {
+    LogReplayGap(event, TopGap(stats_.layout_gaps), "layout", stats_.other_layout_gap_draws);
   }
 
   void LogFrame(const SwapEvent& event) const {
@@ -1696,6 +1859,7 @@ class Sidecar final : public EventSink {
           stats_.texture_sample_bytes, stats_.index_sample_bytes,
           top->vertex_hash, top->pixel_hash, top->draws, stats_.other_shader_pair_draws);
       LogTopTransformGap(event);
+      LogTopLayoutGap(event);
       return;
     }
 
@@ -1730,6 +1894,7 @@ class Sidecar final : public EventSink {
         stats_.hashed_texture_fetches, stats_.hashed_index_buffers, stats_.vertex_sample_bytes,
         stats_.texture_sample_bytes, stats_.index_sample_bytes);
     LogTopTransformGap(event);
+    LogTopLayoutGap(event);
   }
 
   uint32_t swap_count_ = 0;

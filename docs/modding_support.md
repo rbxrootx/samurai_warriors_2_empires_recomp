@@ -731,12 +731,17 @@ edit mode, map screens, and battles.
 
 - Use the `0x82347750` asset-load logs while entering actual battles to correlate stage ids,
   scenario/mode state, and archive entries across more maps.
+- Add explicit bounded runtime logs around stage loaders `0x8227AAB0`, `0x82286D10`, and
+  `0x82286B30`: selected stage id, the three-entry archive group, returned object pointers, and LR.
+  That should connect Blender-side stage edits to exact `LINKDATA_BNS` entries without broad scans.
 - Decode archive entry `68` (`0x44`) and the globals around `0x827A6B70` to map scenario-control
   tables; this is likely a better campaign/script lead than the stale debug-menu strings.
 - Use the full-data hard-link mirror pattern for future patched archive smoke tests; avoid partial
   `data` overlays unless the overlay fallback behavior is changed.
 - Identify the unknown chunks in stage containers; these are likely where collision, pathing,
   placement, weather, or scenario-specific stage metadata lives.
+- Extend the G1M material/texture binding map so Blender exports can pair submeshes with neighboring
+  `G1TG` textures instead of carrying only raw material slot numbers.
 - Use the decoded `LZP2` data to search for economy/officer/weapon tables. The economy is likely in
   table-like binary chunks rather than the direct model/texture files.
 - Name the archive loader, model loader, texture loader, animation loader, and stage loader functions
