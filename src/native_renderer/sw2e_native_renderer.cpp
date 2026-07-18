@@ -125,6 +125,7 @@ struct FrameStats {
   uint32_t native_replay_unsupported_shape_draws = 0;
   uint32_t native_replay_unsupported_layout_draws = 0;
   uint32_t native_replay_unsupported_texture_draws = 0;
+  uint32_t native_replay_unsupported_transform_draws = 0;
   uint32_t vertex_fetch_count = 0;
   uint32_t texture_fetch_count = 0;
   uint32_t indexed_sample_draws = 0;
@@ -364,6 +365,10 @@ bool CanDecodeNativeReplayTexturedVertexFetch(const VertexFetchSummary& fetch) {
   if (FindNativeReplayPositionAttribute(fetch) && FindNativeReplayTexcoordAttribute(fetch)) {
     return true;
   }
+  return fetch.stride_words == 6 && fetch.attribute_count == 3;
+}
+
+bool IsNativeReplayScreenSpaceTexturedVertexFetch(const VertexFetchSummary& fetch) {
   return fetch.stride_words == 6 && fetch.attribute_count == 3;
 }
 
@@ -648,12 +653,24 @@ uint32_t NativeGpuReplayPassScore(const std::vector<gpu_replay::ReplayDraw>& dra
 const VertexFetchSummary* FindNativeReplayTexturedVertexFetch(const DrawEvent& event) {
   for (uint32_t i = 0; i < event.vertex_fetch_summary_count; ++i) {
     const auto& candidate = event.vertex_fetches[i];
-    if (CanDecodeNativeReplayTexturedVertexFetch(candidate) &&
+    if (IsNativeReplayScreenSpaceTexturedVertexFetch(candidate) &&
+        CanDecodeNativeReplayTexturedVertexFetch(candidate) &&
         (event.indexed || candidate.size_bytes >= event.index_count * candidate.stride_words * 4)) {
       return &candidate;
     }
   }
   return nullptr;
+}
+
+bool HasDecodableNativeReplayTexturedVertexFetch(const DrawEvent& event) {
+  for (uint32_t i = 0; i < event.vertex_fetch_summary_count; ++i) {
+    const auto& candidate = event.vertex_fetches[i];
+    if (CanDecodeNativeReplayTexturedVertexFetch(candidate) &&
+        (event.indexed || candidate.size_bytes >= event.index_count * candidate.stride_words * 4)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool IsNativeReplayTexturedTriangleShape(const DrawEvent& event) {
@@ -727,6 +744,7 @@ enum class NativeReplaySupport {
   kUnsupportedShape,
   kUnsupportedLayout,
   kUnsupportedTexture,
+  kUnsupportedTransform,
 };
 
 NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
@@ -738,6 +756,9 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
   }
   if (IsNativeReplayTexturedTriangleShape(event)) {
     if (!FindNativeReplayTexturedVertexFetch(event)) {
+      if (HasDecodableNativeReplayTexturedVertexFetch(event)) {
+        return NativeReplaySupport::kUnsupportedTransform;
+      }
       return NativeReplaySupport::kUnsupportedLayout;
     }
     std::optional<TextureDumpPlan> texture_plan;
@@ -880,6 +901,9 @@ class Sidecar final : public EventSink {
         break;
       case NativeReplaySupport::kUnsupportedTexture:
         ++stats_.native_replay_unsupported_texture_draws;
+        break;
+      case NativeReplaySupport::kUnsupportedTransform:
+        ++stats_.native_replay_unsupported_transform_draws;
         break;
       case NativeReplaySupport::kNoOutputSkipCandidate:
         break;
@@ -1237,7 +1261,8 @@ class Sidecar final : public EventSink {
            stats_.native_replay_unsupported_indexed_draws == 0 &&
            stats_.native_replay_unsupported_shape_draws == 0 &&
            stats_.native_replay_unsupported_layout_draws == 0 &&
-           stats_.native_replay_unsupported_texture_draws == 0;
+           stats_.native_replay_unsupported_texture_draws == 0 &&
+           stats_.native_replay_unsupported_transform_draws == 0;
   }
 
   void CountShaderPair(uint64_t vertex_hash, uint64_t pixel_hash) {
@@ -1548,7 +1573,7 @@ class Sidecar final : public EventSink {
           "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
           "noout_skip={} noout_point={} raster_noout={} viz_query={} "
           "native_supported={} native_tex={} native_solid={} native_indexed={} depth_only={} "
-          "unsupported_output={}/{}/{}/{} "
+          "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
           "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
           "frontbuffer={:#010x} {}x{} "
           "vmem_hash={:#018x} tmem_hash={:#018x} imem_hash={:#018x} "
@@ -1567,12 +1592,13 @@ class Sidecar final : public EventSink {
           stats_.native_replay_unsupported_indexed_draws,
           stats_.native_replay_unsupported_shape_draws,
           stats_.native_replay_unsupported_layout_draws,
-          stats_.native_replay_unsupported_texture_draws, min_fetch, stats_.max_vertex_fetch_end,
-          min_index, stats_.max_index_end, event.frontbuffer_ptr, event.frontbuffer_width,
-          event.frontbuffer_height, stats_.vertex_memory_hash, stats_.texture_memory_hash,
-          stats_.index_memory_hash, stats_.hashed_vertex_fetches, stats_.hashed_texture_fetches,
-          stats_.hashed_index_buffers, stats_.vertex_sample_bytes, stats_.texture_sample_bytes,
-          stats_.index_sample_bytes,
+          stats_.native_replay_unsupported_texture_draws,
+          stats_.native_replay_unsupported_transform_draws, min_fetch,
+          stats_.max_vertex_fetch_end, min_index, stats_.max_index_end, event.frontbuffer_ptr,
+          event.frontbuffer_width, event.frontbuffer_height, stats_.vertex_memory_hash,
+          stats_.texture_memory_hash, stats_.index_memory_hash, stats_.hashed_vertex_fetches,
+          stats_.hashed_texture_fetches, stats_.hashed_index_buffers, stats_.vertex_sample_bytes,
+          stats_.texture_sample_bytes, stats_.index_sample_bytes,
           top->vertex_hash, top->pixel_hash, top->draws, stats_.other_shader_pair_draws);
       return;
     }
@@ -1583,7 +1609,7 @@ class Sidecar final : public EventSink {
         "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
         "noout_skip={} noout_point={} raster_noout={} viz_query={} "
         "native_supported={} native_tex={} native_solid={} native_indexed={} depth_only={} "
-        "unsupported_output={}/{}/{}/{} "
+        "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
         "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
         "frontbuffer={:#010x} {}x{} "
         "vmem_hash={:#018x} tmem_hash={:#018x} imem_hash={:#018x} "
@@ -1600,12 +1626,13 @@ class Sidecar final : public EventSink {
         stats_.native_replay_unsupported_indexed_draws,
         stats_.native_replay_unsupported_shape_draws,
         stats_.native_replay_unsupported_layout_draws,
-        stats_.native_replay_unsupported_texture_draws, min_fetch, stats_.max_vertex_fetch_end,
-        min_index, stats_.max_index_end, event.frontbuffer_ptr, event.frontbuffer_width,
-        event.frontbuffer_height, stats_.vertex_memory_hash, stats_.texture_memory_hash,
-        stats_.index_memory_hash, stats_.hashed_vertex_fetches, stats_.hashed_texture_fetches,
-        stats_.hashed_index_buffers, stats_.vertex_sample_bytes, stats_.texture_sample_bytes,
-        stats_.index_sample_bytes);
+        stats_.native_replay_unsupported_texture_draws,
+        stats_.native_replay_unsupported_transform_draws, min_fetch,
+        stats_.max_vertex_fetch_end, min_index, stats_.max_index_end, event.frontbuffer_ptr,
+        event.frontbuffer_width, event.frontbuffer_height, stats_.vertex_memory_hash,
+        stats_.texture_memory_hash, stats_.index_memory_hash, stats_.hashed_vertex_fetches,
+        stats_.hashed_texture_fetches, stats_.hashed_index_buffers, stats_.vertex_sample_bytes,
+        stats_.texture_sample_bytes, stats_.index_sample_bytes);
   }
 
   uint32_t swap_count_ = 0;

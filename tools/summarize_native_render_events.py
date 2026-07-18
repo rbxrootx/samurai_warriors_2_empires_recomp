@@ -35,6 +35,13 @@ PRIMITIVE_NAMES = {
     0x16: "2d_tri_strip",
 }
 
+FLOAT_FORMAT_COMPONENTS = {
+    36: 1,  # 32_FLOAT
+    37: 2,  # 32_32_FLOAT
+    38: 4,  # 32_32_32_32_FLOAT
+    57: 3,  # 32_32_32_FLOAT
+}
+
 
 def primitive_name(value: int) -> str:
     return PRIMITIVE_NAMES.get(value, f"unknown_0x{value:X}")
@@ -82,6 +89,88 @@ def draw_effect_key(event: dict[str, Any]) -> tuple[bool, bool, bool, bool]:
     )
 
 
+def float_attribute_components(attribute: dict[str, Any]) -> int:
+    return FLOAT_FORMAT_COMPONENTS.get(int(attribute.get("data_format", 0)), 0)
+
+
+def find_attribute_by_result(
+    fetch: dict[str, Any], result_storage_index: int, min_components: int
+) -> dict[str, Any] | None:
+    for attribute in fetch.get("attributes", []):
+        if not isinstance(attribute, dict):
+            continue
+        if (
+            int(attribute.get("result_storage_target", 0)) == 1
+            and int(attribute.get("result_storage_index", -1)) == result_storage_index
+            and float_attribute_components(attribute) >= min_components
+        ):
+            return attribute
+    return None
+
+
+def has_position_attribute(fetch: dict[str, Any]) -> bool:
+    if find_attribute_by_result(fetch, 1, 3):
+        return True
+    return any(
+        isinstance(attribute, dict)
+        and int(attribute.get("offset_words", -1)) == 0
+        and float_attribute_components(attribute) >= 3
+        for attribute in fetch.get("attributes", [])
+    )
+
+
+def has_texcoord_attribute(fetch: dict[str, Any]) -> bool:
+    attributes = [
+        attribute for attribute in fetch.get("attributes", []) if isinstance(attribute, dict)
+    ]
+    if any(
+        int(attribute.get("offset_words", 0)) > 0
+        and float_attribute_components(attribute) == 2
+        for attribute in attributes
+    ):
+        return True
+    if find_attribute_by_result(fetch, 0, 2):
+        return True
+    return any(
+        int(attribute.get("offset_words", 0)) != 0
+        and float_attribute_components(attribute) >= 2
+        for attribute in attributes
+    )
+
+
+def can_decode_textured_vertex_fetch(fetch: dict[str, Any]) -> bool:
+    if has_position_attribute(fetch) and has_texcoord_attribute(fetch):
+        return True
+    return int(fetch.get("stride_words", 0)) == 6 and int(fetch.get("attribute_count", 0)) == 3
+
+
+def is_screen_space_textured_vertex_fetch(fetch: dict[str, Any]) -> bool:
+    return int(fetch.get("stride_words", 0)) == 6 and int(fetch.get("attribute_count", 0)) == 3
+
+
+def vertex_fetch_covers_draw(event: dict[str, Any], fetch: dict[str, Any]) -> bool:
+    if bool(event.get("indexed", False)):
+        return True
+    index_count = int(event.get("index_count", 0))
+    stride_words = int(fetch.get("stride_words", 0))
+    return int(fetch.get("size_bytes", 0)) >= index_count * stride_words * 4
+
+
+def is_textured_triangle_shape(event: dict[str, Any]) -> bool:
+    primitive = int(event.get("primitive", 0))
+    index_count = int(event.get("index_count", 0))
+    indexed = bool(event.get("indexed", False))
+    if not event.get("vertex_fetches") or not event.get("texture_fetches"):
+        return False
+    if indexed and int(event.get("index_length", 0)) <= 0:
+        return False
+    if primitive == 4:
+        return index_count >= 3 and (index_count % 3) == 0
+    if primitive == 6:
+        return index_count >= 3
+    return False
+
+
 def native_replay_support_key(event: dict[str, Any]) -> str:
     info = event.get("shader_info", {})
     effects = event.get("draw_effects", {})
@@ -96,32 +185,22 @@ def native_replay_support_key(event: dict[str, Any]) -> str:
         return "skip_no_output"
     if not output_merger_writes or (color_mask_value & 0x0F) == 0:
         return "depth_or_noncolor_output"
-    primitive = int(event.get("primitive", 0))
     index_count = int(event.get("index_count", 0))
     indexed = bool(event.get("indexed", False))
     vertex_fetches = event.get("vertex_fetches", [])
     texture_fetches = event.get("texture_fetches", [])
 
-    textured_triangle = (
-        primitive == 4
-        and (index_count >= 3 if indexed else index_count == 6)
-        and (index_count % 3) == 0
-        and vertex_fetches
-        and texture_fetches
-        and (not indexed or int(event.get("index_length", 0)) > 0)
-    )
-    if textured_triangle:
+    if is_textured_triangle_shape(event):
         has_vertex_layout = any(
-            int(fetch.get("stride_words", 0)) == 6
-            and int(fetch.get("attribute_count", 0)) == 3
-            and (
-                indexed
-                or int(fetch.get("size_bytes", 0))
-                >= index_count * int(fetch.get("stride_words", 0)) * 4
-            )
+            is_screen_space_textured_vertex_fetch(fetch) and vertex_fetch_covers_draw(event, fetch)
             for fetch in vertex_fetches
         )
         if not has_vertex_layout:
+            if any(
+                can_decode_textured_vertex_fetch(fetch) and vertex_fetch_covers_draw(event, fetch)
+                for fetch in vertex_fetches
+            ):
+                return "unsupported_textured_transform"
             return "unsupported_textured_layout"
         has_supported_texture = any(
             int(fetch.get("format", 0)) == 20
@@ -138,6 +217,7 @@ def native_replay_support_key(event: dict[str, Any]) -> str:
     if indexed:
         return "unsupported_indexed"
 
+    primitive = int(event.get("primitive", 0))
     solid_shape = (primitive == 8 and index_count == 3) or (primitive == 6 and index_count == 4)
     if solid_shape and vertex_fetches and not texture_fetches:
         has_solid_layout = any(

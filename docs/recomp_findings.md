@@ -305,6 +305,21 @@
   `out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_bestpass_20260717-232129.bmp`
   (`1280x720`, mean `0.675269`). This explains the earlier black BMP as a readback-selection issue,
   not a boot/runtime regression.
+- Native replay coverage now separates "decodable vertex layout" from "safe to replay with the
+  current menu-style shader." The D3D11 replay still only submits screen-space textured fetches
+  (`stride_words=6`, `attribute_count=3`); textured draws whose float attributes expose position and
+  UV data but still need vertex shader/model-view-projection work are counted as the new transform
+  gap instead of being falsely marked supported. Live frame logs now label
+  `unsupported_output(indexed/shape/layout/texture/transform)`, and
+  `tools\summarize_native_render_events.py` reports the matching
+  `unsupported_textured_transform` bucket while also recognizing textured `triangle_strip` shapes.
+  Validation `runtime.lean-native-smoke-20260717-233955.log` rebuilt cleanly, exited with code `0`,
+  kept `native_render_events=false`, produced no fatal/assert/crash/exception lines, and wrote the
+  nonblank title-screen BMP
+  `out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_transform_bucket_20260717-233955.bmp`
+  (`1280x720`, mean `0.675269`). A summary pass over the existing title coverage capture still
+  reports the expected title buckets (`343` supported textured, `140` supported solid) and now names
+  the `triangle_strip` primitive family explicitly.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and

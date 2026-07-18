@@ -595,6 +595,21 @@ title-screen BMP
 `out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_bestpass_20260717-232129.bmp`
 (`1280x720`, mean `0.675269`).
 
+Native replay support classification now keeps the current D3D11 replay honest about the remaining
+gameplay gap. Attribute-decodable textured draws are no longer treated as safe to submit unless they
+use the known screen-space menu fetch shape (`stride_words=6`, `attribute_count=3`). If a draw has
+decodable float position/UV attributes but still needs vertex shader/model-view-projection work, the
+live sidecar reports it under
+`unsupported_output(indexed/shape/layout/texture/transform)` and the offline summary reports
+`unsupported_textured_transform`. The summary tool also recognizes textured `triangle_strip` draw
+shapes, matching the runtime strip replay gate. Validation
+`runtime.lean-native-smoke-20260717-233955.log` rebuilt cleanly, exited with code `0`, kept
+`native_render_events=false`, produced no fatal/assert/crash/exception lines, and wrote the nonblank
+title-screen BMP
+`out\build\win-amd64-debug\extracted\native_render_samples\lean_native_smoke_transform_bucket_20260717-233955.bmp`
+(`1280x720`, mean `0.675269`). Re-summarizing the existing title coverage capture still reports the
+expected `343` supported textured and `140` supported solid buckets.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
