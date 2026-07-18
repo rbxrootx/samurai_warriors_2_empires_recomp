@@ -562,7 +562,8 @@
   `extracted\native_render_samples\native_standard_replay_20260718-031228.bmp`, and raised the
   same gameplay replay summary to `native_supported=740`, `native_tex=728`, `native_solid=12`, with
   the old layout bucket reduced from `729` to `1`. The output shows UI/roster text through the
-  normal replay path; exact pixel shader constant modulation is still a follow-up.
+  normal replay path. The replay path now multiplies textures by captured vertex color/alpha, but
+  exact DE7 pixel `c0`/factor modulation is still a follow-up.
 
 ## Save And Storage Path
 

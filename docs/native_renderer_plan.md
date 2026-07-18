@@ -695,7 +695,7 @@ That is now classified as a constant-selector screen-space quad family rather th
 mesh. Dumped shader ucode shows the single float vertex stream selects one of four constant rows:
 `c7..c10` provide screen positions, `c11..c14` provide color, and `c15..c18` provide UVs. The pixel
 shader samples `tf0` and modulates against captured constants; the current native replay captures
-the geometry, texture, and vertex color path, while exact pixel constant modulation remains a
+the geometry, texture, vertex color, and `c19.x` alpha path, while exact pixel constant modulation remains a
 follow-up accuracy task.
 
 For bounded gap bytes plus an offline mesh preview bridge, use:
@@ -979,8 +979,9 @@ summary moved from the earlier `native_supported=12 native_tex=0 native_solid=12
 native_solid=12` with only one remaining layout gap in the same gameplay scene. Retained draw lines
 show repeated DE7 captures such as `vertices=4`, `indices=6`, `stride_words=1`, and `texture=32x32`.
 The BMP is a valid nonblank `1280x720` replay with visible UI/roster text, proving this family is no
-longer a layout wall. Treat the pixel shader as approximate until its `tf0`/constant modulation path
-is mirrored in the replacement shader.
+longer a layout wall. The generic textured replay shader now multiplies sampled textures by captured
+vertex color/alpha, but the DE7 pixel shader's `c0`/factor modulation still needs a dedicated
+replacement shader for exact output.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

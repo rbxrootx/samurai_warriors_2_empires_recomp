@@ -2147,6 +2147,7 @@ class Sidecar final : public EventSink {
       const auto* position_constant = FindNativeReplayFloatConstant(event, 7 + selector);
       const auto* color_constant = FindNativeReplayFloatConstant(event, 11 + selector);
       const auto* texcoord_constant = FindNativeReplayFloatConstant(event, 15 + selector);
+      const auto* alpha_constant = FindNativeReplayFloatConstant(event, 19);
       if (!position_constant || !color_constant || !texcoord_constant) {
         native_gpu_replay_draw_keys_.erase(key);
         return false;
@@ -2162,7 +2163,7 @@ class Sidecar final : public EventSink {
       replay_vertex.r = color_constant->values[0];
       replay_vertex.g = color_constant->values[1];
       replay_vertex.b = color_constant->values[2];
-      replay_vertex.a = color_constant->values[3];
+      replay_vertex.a = alpha_constant ? alpha_constant->values[0] : color_constant->values[3];
       replay_draw.vertices.push_back(replay_vertex);
     }
 

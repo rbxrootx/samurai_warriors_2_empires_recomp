@@ -308,7 +308,7 @@ struct PSInput {
 };
 
 float4 main(PSInput input) : SV_Target {
-  return source_texture.Sample(source_sampler, input.texcoord);
+  return source_texture.Sample(source_sampler, input.texcoord) * input.color;
 }
 )";
 
