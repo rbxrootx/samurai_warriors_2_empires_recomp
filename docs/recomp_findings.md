@@ -488,9 +488,9 @@
   `45C4DDDAAA10F75F` both fetch model position/UV, perform indexed transform work through
   `c[4+a0]`, `c[5+a0]`, and `c[6+a0]`, and then write `oPos` through a final `c0..c3` block.
   `1A2E173CABDD3E80` uses a different path with final `c3..c6` and object work through
-  `c[7+a0]..c[9+a0]`. The current event stream gives only compact constant snapshots, capped at
-  eight float4 constants per stage, so full native gameplay rendering needs shader-guided constant
-  capture/evaluation rather than the old arbitrary four-constant projection heuristic.
+  `c[7+a0]..c[9+a0]`. The event stream gives compact constant snapshots capped by the SDK summary
+  limit (`128` in the current source-SDK build), while the old arbitrary projection heuristic remains
+  capped to its first-eight search space.
 - `-ProjectedGapMode shader-final-fit` now provides a shader-guided final-block diagnostic.
   Validation `runtime.native-transform-probe-20260718-014425.log` filtered to
   `VS=0xED8D12865D27DEBF`, exited with code `0`, touched no event JSON, and wrote
@@ -499,12 +499,14 @@
   clip space before normalization (`inside=0.000`), proving that the next implementation step is the
   upstream skin/world transform through `c[4+a0]..c[6+a0]`.
 - `tools\apply_rexglue_native_render_wide_constants.ps1` patches a source ReXGlue SDK checkout so
-  `kMaxFloatConstantSummariesPerDraw` is `64` instead of `8`. Validation
-  `runtime.native-transform-probe-20260718-014734.log` applied that local SDK patch, rebuilt, kept
-  event JSON off, and wrote a bounded `64`-row gap manifest. The manifest is `542107` bytes; every
-  row carries `64` vertex constants, with maximum vertex constant index `63`, including rows for
-  `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`. The old projection heuristic remains capped to
-  its first-eight behavior so wider captures do not make runtime probing explode combinatorially.
+  `kMaxFloatConstantSummariesPerDraw` is `128` instead of `8`. Validation
+  `runtime.native-transform-probe-20260718-014734.log` first applied a local `64`-constant SDK patch,
+  rebuilt, kept event JSON off, and wrote a bounded `64`-row gap manifest. The manifest is `542107`
+  bytes; every row carried `64` vertex constants, with maximum vertex constant index `63`, including
+  rows for `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`. Later ED8D packed-index inspection
+  found palette offsets up to `93`, requiring constants through `c99`, so the source-SDK patch
+  default is now `128`. The old projection heuristic remains capped to its first-eight behavior so
+  wider captures do not make runtime probing explode combinatorially.
 - `-ProjectedGapMode shader-bone0-final-fit` now applies the first upstream shader matrix block
   before the final projection for the shared `ED8D12865D27DEBF` / `45C4DDDAAA10F75F` transform
   skeleton. Validation `runtime.native-transform-probe-20260718-015443.log` filtered to
@@ -515,6 +517,17 @@
   `runtime.native-transform-probe-20260718-015800.log` also stayed inside clip space but still
   stretches visually, so the next renderer step is full branch/weight/index evaluation from the
   dumped shader path rather than another arbitrary projection heuristic.
+- `-ProjectedGapMode shader-skinned-final-fit` now reads ED8D's real stride-12 skin inputs: two
+  float weights at vertex words `3/4` and packed palette offsets at word `5`. Validation
+  `runtime.native-transform-probe-20260718-022724.log` used the `128`-constant source-SDK build,
+  filtered to `VS=0xED8D12865D27DEBF`, kept event JSON off, and wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-022724.bmp` with two
+  captured D3D11 draws. Candidate logs show `source=shader-skinned-c4-c6-c0-c3`,
+  `upstream=skinned:c4+a0..c6+a0`, and `finite=1.000 inside=1.000` for retained draws.
+- The same `shader-skinned-final-fit` pass against `VS=0x45C4DDDAAA10F75F` wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-022845.bmp` with four
+  captured draws and finite/inside metrics, but still renders as a long thin strip. Keep 45C4
+  classified as a separate follow-up until its branch semantics and draw-family purpose are mapped.
 
 ## Save And Storage Path
 

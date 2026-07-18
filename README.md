@@ -110,11 +110,13 @@ Useful launchers:
   normalization, `-ProjectedGapMode constant` for the strict unnormalized projection check, or
   `-ProjectedGapMode shader-final-fit` to test the dumped-shader final projection block.
   `-ProjectedGapMode shader-bone0-final-fit` adds the first upstream shader matrix block
-  (`c4-c6`) before the final projection. The underlying PowerShell probe also accepts
-  `-ProjectedVertexShader`, `-ProjectedPixelShader`, `-ProjectedGapMinIndices`, and `-DumpShaders`
-  for focused shader-family analysis.
+  (`c4-c6`) before the final projection. `-ProjectedGapMode shader-skinned-final-fit` reads the
+  dumped-shader weight/index inputs and applies the indexed `c[4+a0]..c[6+a0]` palette block before
+  the final projection. The underlying PowerShell probe also accepts `-ProjectedVertexShader`,
+  `-ProjectedPixelShader`, `-ProjectedGapMinIndices`, and `-DumpShaders` for focused shader-family
+  analysis.
 - `tools\apply_rexglue_native_render_wide_constants.ps1` patches a source ReXGlue SDK checkout so
-  the native-render event stream captures up to 64 float constants per draw instead of 8. Use this
+  the native-render event stream captures up to 128 float constants per draw instead of 8. Use this
   with the local source SDK when working on gameplay shader transforms.
 
 ## Modding Direction

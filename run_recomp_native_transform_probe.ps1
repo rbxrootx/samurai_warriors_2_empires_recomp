@@ -12,7 +12,7 @@ param(
   [string]$ProjectedVertexShader = "",
   [string]$ProjectedPixelShader = "",
   [switch]$DumpShaders,
-  [ValidateSet("debug-fit", "constant", "constant-fit", "shader-final", "shader-final-fit", "shader-bone0-final", "shader-bone0-final-fit")]
+  [ValidateSet("debug-fit", "constant", "constant-fit", "shader-final", "shader-final-fit", "shader-bone0-final", "shader-bone0-final-fit", "shader-skinned-final", "shader-skinned-final-fit")]
   [string]$ProjectedGapMode = "debug-fit",
   [switch]$ExternalPulseInput,
   [switch]$NoMoveWindow,
@@ -130,11 +130,14 @@ if ($ProjectedGapReplay) {
   $projectedDebugFit = $ProjectedGapMode -eq "debug-fit"
   $projectedNormalize = $ProjectedGapMode -eq "constant-fit" -or
     $ProjectedGapMode -eq "shader-final-fit" -or
-    $ProjectedGapMode -eq "shader-bone0-final-fit"
+    $ProjectedGapMode -eq "shader-bone0-final-fit" -or
+    $ProjectedGapMode -eq "shader-skinned-final-fit"
   $projectionStrategy = if ($ProjectedGapMode -eq "shader-final" -or $ProjectedGapMode -eq "shader-final-fit") {
     "shader-final"
   } elseif ($ProjectedGapMode -eq "shader-bone0-final" -or $ProjectedGapMode -eq "shader-bone0-final-fit") {
     "shader-bone0-final"
+  } elseif ($ProjectedGapMode -eq "shader-skinned-final" -or $ProjectedGapMode -eq "shader-skinned-final-fit") {
+    "shader-skinned-final"
   } else {
     "heuristic"
   }

@@ -103,7 +103,7 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_projected_min_indices` | `0` | Optional minimum expanded index count for projected transform-gap replay draws. |
 | `sw2e_native_renderer_gpu_replay_projected_vertex_shader_filter` | empty | Optional hex vertex-shader hash filter for projected transform-gap replay. |
 | `sw2e_native_renderer_gpu_replay_projected_pixel_shader_filter` | empty | Optional hex pixel-shader hash filter for projected transform-gap replay. |
-| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-bone0-final` applies the first upstream shader matrix block before the final projection; `shader-final-or-heuristic` compares the older final/heuristic paths. |
+| `sw2e_native_renderer_gpu_replay_projection_strategy` | `heuristic` | Projection strategy for transform-gap replay. `heuristic` keeps the old bounded first-eight constant scorer; `shader-final` uses known final blocks from dumped ucode; `shader-bone0-final` applies the first upstream shader matrix block before the final projection; `shader-skinned-final` evaluates the shared shader's weight/index palette path before the final projection; `shader-final-or-heuristic` compares the older final/heuristic paths. |
 | `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 | `sw2e_native_renderer_gpu_replay_normalize_projected_gaps` | `false` | Applies the best constant projection first, then normalizes projected XY for visibility diagnostics. |
 | `dump_shaders` | empty | ReXGlue GPU cvar. When set to a folder, ReXGlue writes analyzed shader ucode and translated shader files there. Use only in short focused probes. |
@@ -114,8 +114,9 @@ vertex binding/attribute counts, texture binding counts, constant usage, memexpo
 render-state summaries, compact float4 constant snapshots, compact vertex fetch summaries, and
 compact texture fetch summaries. Render-state summaries include raw RB color/depth/blend registers,
 ReXGlue's normalized color mask, normalized depth control, pixel shader color-target mask, and all
-four RT blend controls. The constant snapshots are capped to the first eight referenced float4
-registers per shader stage and include both readable float values and raw bit patterns. Vertex
+four RT blend controls. The constant snapshots are capped by the native-render event stream summary
+limit (`128` in the current source-SDK build) and include both readable float values and raw bit
+patterns. Vertex
 summaries include fetch constant, guest buffer address/size, stride, attribute count, and compact
 per-attribute declarations: Xenos data format, word offset, exponent adjust, signed/integer flags,
 shader result target/index, write mask, used source components, and result swizzle. Texture
@@ -857,17 +858,18 @@ projection alone is not enough: native gameplay rendering needs the upstream ski
 `c[4+a0]..c[6+a0]`.
 
 The project now includes `tools\apply_rexglue_native_render_wide_constants.ps1` for source-SDK
-builds. It changes ReXGlue's native-render event stream constant cap from `8` to `64`; the runtime
+builds. It changes ReXGlue's native-render event stream constant cap from `8` to `128`; the runtime
 and project side must both be rebuilt after applying it. The project heuristic remains capped at the
 first eight constants, so widening the SDK does not explode the old scorer, but exact shader-guided
-lookups and sample manifests can now see higher-index constants. Validation
-`runtime.native-transform-probe-20260718-014734.log` applied the patch locally, rebuilt cleanly, ran
-a bounded gap sample probe, kept `native_render_events=false`, touched no event JSON, and wrote
-`64` rows to
+lookups can now see the higher palette constants used by gameplay skinning. Validation
+`runtime.native-transform-probe-20260718-014734.log` first proved a local `64`-constant patch,
+rebuilt cleanly, ran a bounded gap sample probe, kept `native_render_events=false`, touched no event
+JSON, and wrote `64` rows to
 `extracted\native_render_samples\native_gap_probe_20260718-014734\samples.jsonl`
 (`542107` bytes). Every row had `64` vertex float constants and the maximum captured vertex
 constant index was `63`; the first `45C4DDDAAA10F75F / 7703E4142DFBD4D4` rows now include constants
-`c0..c63`.
+`c0..c63`. The later ED8D indexed-vertex check found packed palette offsets up to `93`, requiring
+constants through `c99`, so the default source-SDK patch was raised to `128`.
 
 `-ProjectedGapMode shader-bone0-final-fit` now tests the first upstream transform block found in the
 `ED8D12865D27DEBF` and `45C4DDDAAA10F75F` shaders before the final `c0..c3` projection. It uses the
@@ -881,12 +883,32 @@ show `source=shader-bone0-c4-c6-c0-c3`, upstream constants `c6,c5,c4`, and `insi
 retained stride-12 draws (`845/2415` and `1542/2853`). The BMP is a recognizable projected mesh
 rather than the earlier thin streak, proving the upstream shader/world block is necessary and useful.
 
+`-ProjectedGapMode shader-skinned-final-fit` now evaluates the shared ED8D/45C4 shader skeleton's
+weight/index path. For `ED8D12865D27DEBF`, the stride-12 vertex layout provides two float weights at
+words `3/4` and packed `FMT_8_8_8_8` palette offsets at word `5`; the dumped shader uses those
+offsets as `a0` against `c[4+a0]..c[6+a0]` before the final `c0..c3` projection.
+
+Validation `runtime.native-transform-probe-20260718-022724.log` used the `128`-constant source-SDK
+patch, filtered to `VS=0xED8D12865D27DEBF`, exited with code `0`, kept event JSON off, and wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-022724.bmp` using two captured
+D3D11 draws. Candidate logs show `source=shader-skinned-c4-c6-c0-c3`,
+`upstream=skinned:c4+a0..c6+a0`, `finite=1.000`, and `inside=1.000` for retained draws such as
+frame `2868` draws `43/44`. This is the current best proof that native gameplay rendering should be
+driven by shader-specific transform replay, not arbitrary matrix guessing.
+
 Validation `runtime.native-transform-probe-20260718-015800.log` filtered to
 `VS=0x45C4DDDAAA10F75F`, also exited with code `0`, kept event JSON off, and wrote
 `extracted\native_render_samples\native_projected_gap_replay_20260718-015800.bmp`. The candidate
 math is finite and inside clip space for the stride-9 family, but the BMP is still stretched. That
 means this shader family needs fuller evaluation of the branch/weight/index path from the dumped
 ucode, not just the first-matrix diagnostic.
+
+Validation `runtime.native-transform-probe-20260718-022845.log` reran `45C4DDDAAA10F75F` through
+`shader-skinned-final-fit` after the `128`-constant rebuild. It wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-022845.bmp` using four
+captured draws, and the candidate metrics stayed finite/inside (`1.000`), but the BMP still renders
+as a long thin strip. Treat this hash as a separate draw family until the branch semantics and
+texture/layout classification are mapped more exactly.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

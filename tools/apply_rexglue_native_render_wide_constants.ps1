@@ -1,6 +1,6 @@
 param(
   [string]$RexSdkDir = "L:\SM2\thirdparty\rexglue-sdk-source-v0.8.0",
-  [int]$ConstantSummaryLimit = 64
+  [int]$ConstantSummaryLimit = 128
 )
 
 $ErrorActionPreference = "Stop"

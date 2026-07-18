@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -24,6 +25,10 @@ struct ReplayVertex {
   float g = 1.0f;
   float b = 1.0f;
   float a = 1.0f;
+  bool has_shared_shader_skin = false;
+  float shared_shader_weight0 = 0.0f;
+  float shared_shader_weight1 = 0.0f;
+  std::array<uint32_t, 4> shared_shader_constant_offsets = {};
 };
 
 struct ReplayTexture {

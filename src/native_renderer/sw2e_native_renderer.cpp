@@ -123,7 +123,7 @@ REXCVAR_DEFINE_STRING(sw2e_native_renderer_gpu_replay_projected_pixel_shader_fil
 REXCVAR_DEFINE_STRING(
     sw2e_native_renderer_gpu_replay_projection_strategy, "heuristic", "SM2/Native Render",
     "Projected transform-gap projection strategy: heuristic, shader-final, shader-bone0-final, "
-    "or shader-final-or-heuristic");
+    "shader-skinned-final, or shader-final-or-heuristic");
 
 REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps, false,
                     "SM2/Native Render",
@@ -185,6 +185,7 @@ struct ProjectionCandidate {
   bool valid = false;
   bool column_major = false;
   bool has_upstream_transform = false;
+  bool use_shared_shader_skin = false;
   const char* source = "none";
   float finite_ratio = 0.0f;
   float inside_ratio = 0.0f;
@@ -193,6 +194,11 @@ struct ProjectionCandidate {
   std::array<std::array<float, 4>, 4> rows = {};
   std::array<uint32_t, 3> upstream_constant_indices = {};
   std::array<std::array<float, 4>, 3> upstream_rows = {};
+  std::array<bool, rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw>
+      shared_shader_constant_present = {};
+  std::array<std::array<float, 4>,
+             rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw>
+      shared_shader_constants = {};
   std::array<float, 3> ndc_mins = {};
   std::array<float, 3> ndc_maxs = {};
 };
@@ -333,14 +339,23 @@ uint32_t ReadBe32(const uint8_t* data) {
          uint32_t(data[3]);
 }
 
-float ReadF32(const uint8_t* data, uint32_t endian) {
+uint32_t ReadU32WithEndian(const uint8_t* data, uint32_t endian) {
   uint32_t bits = 0;
   if (endian == 2) {
     bits = ReadBe32(data);
   } else {
     std::memcpy(&bits, data, sizeof(bits));
+    if (endian == 1) {
+      bits = ((bits << 8) & 0xFF00FF00u) | ((bits >> 8) & 0x00FF00FFu);
+    } else if (endian == 3) {
+      bits = (bits << 16) | (bits >> 16);
+    }
   }
+  return bits;
+}
 
+float ReadF32(const uint8_t* data, uint32_t endian) {
+  const uint32_t bits = ReadU32WithEndian(data, endian);
   float value = 0.0f;
   std::memcpy(&value, &bits, sizeof(value));
   return value;
@@ -506,6 +521,42 @@ bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_str
   return false;
 }
 
+void DecodeNativeReplaySharedShaderSkinInputs(const uint8_t* vertex,
+                                              uint32_t vertex_stride_bytes, uint32_t endian,
+                                              uint64_t vertex_shader_hash,
+                                              gpu_replay::ReplayVertex& replay_vertex) {
+  replay_vertex.has_shared_shader_skin = false;
+  replay_vertex.shared_shader_weight0 = 1.0f;
+  replay_vertex.shared_shader_weight1 = 0.0f;
+  replay_vertex.shared_shader_constant_offsets = {};
+
+  if (vertex_shader_hash == 0x45C4DDDAAA10F75Full) {
+    replay_vertex.has_shared_shader_skin = true;
+    return;
+  }
+
+  if (vertex_shader_hash != 0xED8D12865D27DEBFull || vertex_stride_bytes < 24) {
+    return;
+  }
+
+  const float weight0 = ReadF32(vertex + 12, endian);
+  const float weight1 = ReadF32(vertex + 16, endian);
+  if (!std::isfinite(weight0) || !std::isfinite(weight1)) {
+    return;
+  }
+
+  const uint32_t packed_indices = ReadU32WithEndian(vertex + 20, endian);
+  replay_vertex.shared_shader_weight0 = weight0;
+  replay_vertex.shared_shader_weight1 = weight1;
+  replay_vertex.shared_shader_constant_offsets = {
+      (packed_indices >> 24) & 0xFFu,
+      (packed_indices >> 16) & 0xFFu,
+      (packed_indices >> 8) & 0xFFu,
+      packed_indices & 0xFFu,
+  };
+  replay_vertex.has_shared_shader_skin = true;
+}
+
 std::array<float, 4> TransformNativeReplayPosition(
     const gpu_replay::ReplayVertex& vertex,
     const std::array<std::array<float, 4>, 4>& rows, bool column_major) {
@@ -527,10 +578,88 @@ std::array<float, 4> TransformNativeReplayPosition(
   return output;
 }
 
+std::optional<std::array<float, 3>> EvaluateNativeReplaySharedShaderBone(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection,
+    uint32_t constant_offset) {
+  const std::array<float, 4> source = {vertex.x, vertex.y, vertex.w, vertex.z};
+  std::array<float, 3> output = {};
+  for (uint32_t row = 0; row < 3; ++row) {
+    const uint32_t constant_index = 6u - row + constant_offset;
+    if (constant_index >= projection.shared_shader_constant_present.size() ||
+        !projection.shared_shader_constant_present[constant_index]) {
+      return std::nullopt;
+    }
+
+    const auto& constant = projection.shared_shader_constants[constant_index];
+    const std::array<float, 4> swizzled_constant = {
+        constant[3],
+        constant[2],
+        constant[0],
+        constant[1],
+    };
+    for (uint32_t component = 0; component < 4; ++component) {
+      output[row] += swizzled_constant[component] * source[component];
+    }
+    if (!std::isfinite(output[row])) {
+      return std::nullopt;
+    }
+  }
+  return output;
+}
+
+std::optional<std::array<float, 3>> EvaluateNativeReplaySharedShaderSkin(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (!vertex.has_shared_shader_skin) {
+    return std::nullopt;
+  }
+
+  const float weight0 = vertex.shared_shader_weight0;
+  const float weight1 = vertex.shared_shader_weight1;
+  const float weight2 = 1.0f - weight0 - weight1;
+  if (!std::isfinite(weight0) || !std::isfinite(weight1) || !std::isfinite(weight2) ||
+      std::max({std::abs(weight0), std::abs(weight1), std::abs(weight2)}) > 8.0f) {
+    return std::nullopt;
+  }
+
+  std::array<float, 3> output = {};
+  const auto add_weighted_bone = [&](uint32_t offset, float weight) -> bool {
+    if (std::abs(weight) <= 1e-5f) {
+      return true;
+    }
+    const std::optional<std::array<float, 3>> bone =
+        EvaluateNativeReplaySharedShaderBone(vertex, projection, offset);
+    if (!bone) {
+      return false;
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+      output[axis] += (*bone)[axis] * weight;
+    }
+    return true;
+  };
+
+  if (!add_weighted_bone(vertex.shared_shader_constant_offsets[0], weight0) ||
+      !add_weighted_bone(vertex.shared_shader_constant_offsets[1], weight1) ||
+      !add_weighted_bone(vertex.shared_shader_constant_offsets[2], weight2)) {
+    return std::nullopt;
+  }
+  return output;
+}
+
 std::array<float, 4> TransformNativeReplayPositionWithCandidate(
     const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
   gpu_replay::ReplayVertex projected_vertex = vertex;
-  if (projection.has_upstream_transform) {
+  if (projection.use_shared_shader_skin) {
+    const std::optional<std::array<float, 3>> output =
+        EvaluateNativeReplaySharedShaderSkin(vertex, projection);
+    if (!output) {
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      return {nan, nan, nan, nan};
+    }
+    projected_vertex.x = (*output)[0];
+    projected_vertex.y = (*output)[1];
+    projected_vertex.z = (*output)[2];
+    projected_vertex.w = 1.0f;
+  } else if (projection.has_upstream_transform) {
     const std::array<float, 4> source = {vertex.x, vertex.y, vertex.w, vertex.z};
     std::array<float, 3> output = {};
     for (uint32_t row = 0; row < 3; ++row) {
@@ -682,12 +811,38 @@ bool BuildNativeReplayBone0UpstreamRows(const DrawEvent& event,
   return true;
 }
 
+bool CopyNativeReplaySharedShaderConstants(const DrawEvent& event,
+                                           ProjectionCandidate& candidate) {
+  candidate.shared_shader_constant_present.fill(false);
+  candidate.shared_shader_constants = {};
+
+  const uint32_t constant_count =
+      std::min(event.vertex_float_constant_summary_count,
+               rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw);
+  for (uint32_t i = 0; i < constant_count; ++i) {
+    const auto& constant = event.vertex_float_constants[i];
+    if (constant.constant_index >= candidate.shared_shader_constant_present.size()) {
+      continue;
+    }
+    candidate.shared_shader_constant_present[constant.constant_index] = true;
+    for (uint32_t component = 0; component < 4; ++component) {
+      candidate.shared_shader_constants[constant.constant_index][component] =
+          constant.values[component];
+      if (!std::isfinite(constant.values[component])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
     const DrawEvent& event, const std::vector<gpu_replay::ReplayVertex>& vertices,
-    bool include_bone0_upstream) {
+    bool include_bone0_upstream, bool include_shared_shader_skin) {
   std::array<uint32_t, 4> constants = {};
   bool negate_y_row = false;
   bool supports_bone0_upstream = false;
+  bool supports_shared_shader_skin = false;
   const char* source = nullptr;
   switch (event.vertex_shader_hash) {
     case 0xED8D12865D27DEBFull:
@@ -695,7 +850,10 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       constants = {0, 1, 2, 3};
       negate_y_row = true;
       supports_bone0_upstream = true;
-      source = include_bone0_upstream ? "shader-bone0-c4-c6-c0-c3" : "shader-final-c0-c3";
+      supports_shared_shader_skin = true;
+      source = include_shared_shader_skin ? "shader-skinned-c4-c6-c0-c3"
+                                          : include_bone0_upstream ? "shader-bone0-c4-c6-c0-c3"
+                                                                   : "shader-final-c0-c3";
       break;
     case 0x1A2E173CABDD3E80ull:
       constants = {3, 4, 5, 6};
@@ -705,6 +863,7 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
       return {};
   }
   include_bone0_upstream = include_bone0_upstream && supports_bone0_upstream;
+  include_shared_shader_skin = include_shared_shader_skin && supports_shared_shader_skin;
 
   std::array<std::array<float, 4>, 4> rows = {};
   if (!BuildNativeReplaySwizzledProjectionRows(event, constants, negate_y_row, rows)) {
@@ -721,6 +880,10 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
     return {};
   }
   candidate.has_upstream_transform = include_bone0_upstream;
+  if (include_shared_shader_skin && !CopyNativeReplaySharedShaderConstants(event, candidate)) {
+    return {};
+  }
+  candidate.use_shared_shader_skin = include_shared_shader_skin;
   candidate = ScoreNativeReplayProjectionCandidate(candidate, vertices);
   if (!candidate.valid &&
       REXCVAR_GET(sw2e_native_renderer_gpu_replay_normalize_projected_gaps) &&
@@ -786,12 +949,14 @@ ProjectionCandidate FindNativeReplayProjectionCandidate(
   const bool use_shader_final =
       strategy == "shader-final" || strategy == "shader-final-or-heuristic";
   const bool use_shader_bone0 = strategy == "shader-bone0-final";
+  const bool use_shader_skinned = strategy == "shader-skinned-final";
   const bool use_heuristic = strategy.empty() || strategy == "heuristic" ||
                              strategy == "shader-final-or-heuristic";
 
   ProjectionCandidate best;
-  if (use_shader_final || use_shader_bone0) {
-    best = FindNativeReplayShaderFinalProjectionCandidate(event, vertices, use_shader_bone0);
+  if (use_shader_final || use_shader_bone0 || use_shader_skinned) {
+    best = FindNativeReplayShaderFinalProjectionCandidate(event, vertices, use_shader_bone0,
+                                                          use_shader_skinned);
   }
   if (use_heuristic) {
     ProjectionCandidate heuristic = FindNativeReplayHeuristicProjectionCandidate(event, vertices);
@@ -1935,6 +2100,8 @@ class Sidecar final : public EventSink {
         native_gpu_replay_draw_keys_.erase(key);
         return RejectNativeGpuReplayProjectedTransformGap(event, "vertex_decode", replay_support);
       }
+      DecodeNativeReplaySharedShaderSkinInputs(vertex, vertex_stride_bytes, vertex_fetch->endian,
+                                               event.vertex_shader_hash, replay_vertex);
       replay_draw.vertices.push_back(replay_vertex);
     }
 
@@ -1980,8 +2147,10 @@ class Sidecar final : public EventSink {
     replay_draw.texture.bytes_ref = std::move(texture_bytes_ref);
     QueueNativeGpuReplayDraw(std::move(replay_draw), "projected transform gap");
     if (native_gpu_replay_captured_draw_log_count_ <= kNativeGpuReplayDrawLogLimit) {
-      char upstream_constants[32] = "none";
-      if (projection.has_upstream_transform) {
+      char upstream_constants[64] = "none";
+      if (projection.use_shared_shader_skin) {
+        std::snprintf(upstream_constants, sizeof(upstream_constants), "skinned:c4+a0..c6+a0");
+      } else if (projection.has_upstream_transform) {
         std::snprintf(upstream_constants, sizeof(upstream_constants), "c%u,c%u,c%u",
                       projection.upstream_constant_indices[0],
                       projection.upstream_constant_indices[1],
