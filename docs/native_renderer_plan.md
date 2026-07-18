@@ -97,6 +97,10 @@ Relevant cvars:
 | `sw2e_native_renderer_gpu_replay_suppress_backend_swap` | `false` | Opt-in presenter handoff: after a successful native live replay present of a fully covered frame, suppresses that frame's compatibility backend swap. |
 | `sw2e_native_renderer_gpu_replay_complete_on_swap` | `true` | Completes the current native GPU replay batch at each swap so high draw limits can capture frame-shaped supported passes. |
 | `sw2e_native_renderer_gpu_replay_include_solid_geometry` | `false` | Opt-in capture/replay for solid rectangle-list and triangle-strip title/menu families. |
+| `sw2e_native_renderer_gpu_replay_include_transform_gaps` | `false` | Opt-in capture/replay for experimental gameplay transform-gap draw families. |
+| `sw2e_native_renderer_gpu_replay_transform_gaps_only` | `false` | Restricts replay capture to experimental transform-gap draws. |
+| `sw2e_native_renderer_gpu_replay_transform_gap_min_vertices` | `32` | Minimum decoded vertex count for projected transform-gap replay draws. |
+| `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps` | `false` | Normalizes projected transform-gap vertices into visible clip space for debug output. |
 
 Each `draw` line records frame/draw index, primitive type, index-buffer metadata, render-target
 register state, scissor/window state, active vertex/pixel shader hashes, shader microcode size,
@@ -739,6 +743,33 @@ for example, the first indexed stride-9 draw records raw bounds
 `(-19.8618736,-7.46388149,-18.582634)..(130.643448,7.46388197,7.53691673)` and a candidate
 `c0,c2,c4,c6` in column-major orientation. Treat that as a lead for shader analysis, not a final
 projection formula.
+
+The first opt-in projected gameplay-gap replay is now live:
+
+```powershell
+.\run_recomp_native_projected_gap_replay.bat
+```
+
+This launcher keeps `native_render_events=false`, writes no large event JSON, and enables only the
+experimental D3D11 path for `unsupported_textured_transform` draws. Validation
+`runtime.native-transform-probe-20260718-005916.log` exited with code `0`, touched no JSON event
+file, wrote
+`extracted\native_render_samples\native_projected_gap_replay_20260718-005916.bmp`, and submitted
+12 captured D3D11 draws. The BMP is `1280x720` with `370263` nonzero RGB channels out of
+`2764800`, mean RGB `16.4959`, and visible character-shaped gameplay geometry. This is the first
+native D3D11 output from real gameplay transform-gap meshes.
+
+The important runtime fix was primitive-restart handling for indexed triangle strips. Several useful
+gameplay transform-gap draws contain `0xFFFF` restart indices; treating that value as a normal max
+vertex index made the replay reject those draws as impossible `vertex_size` requests. The capture
+path now ignores restart markers when bounding indexed vertex copies and splits triangle strips at
+restart markers before uploading replay indices.
+
+The current projected-gap output deliberately uses `debug_fit_projected_gaps=true`, which chooses a
+large raw vertex-axis pair and fits it into clip space for inspection. That makes the mesh visible
+and proves the D3D11 gameplay submission path, but it is not the final Xbox vertex-shader transform.
+The next step is to replace debug-fit with the real per-draw camera/model/projection constants,
+depth state, material shader replacement, and render-target ownership.
 
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render

@@ -237,6 +237,28 @@ VSOutput main(VSInput input) {
 }
 )";
 
+const char kProjectedVertexShaderHlsl[] = R"(
+struct VSInput {
+  float4 position : POSITION;
+  float2 texcoord : TEXCOORD0;
+  float4 color : COLOR0;
+};
+
+struct VSOutput {
+  float4 position : SV_Position;
+  float2 texcoord : TEXCOORD0;
+  float4 color : COLOR0;
+};
+
+VSOutput main(VSInput input) {
+  VSOutput output;
+  output.position = input.position;
+  output.texcoord = input.texcoord;
+  output.color = input.color;
+  return output;
+}
+)";
+
 const char kPixelShaderHlsl[] = R"(
 Texture2D<float4> source_texture : register(t0);
 SamplerState source_sampler : register(s0);
@@ -249,6 +271,24 @@ struct PSInput {
 
 float4 main(PSInput input) : SV_Target {
   return source_texture.Sample(source_sampler, input.texcoord);
+}
+)";
+
+const char kProjectedPixelShaderHlsl[] = R"(
+Texture2D<float4> source_texture : register(t0);
+SamplerState source_sampler : register(s0);
+
+struct PSInput {
+  float4 position : SV_Position;
+  float2 texcoord : TEXCOORD0;
+  float4 color : COLOR0;
+};
+
+float4 main(PSInput input) : SV_Target {
+  float4 tex = source_texture.Sample(source_sampler, input.texcoord);
+  float3 debug_tint = float3(0.95f, 0.72f, 0.24f);
+  float3 color = max(tex.rgb, debug_tint * 0.75f);
+  return float4(color, 1.0f);
 }
 )";
 
@@ -419,7 +459,9 @@ struct ReplayD3D11Pipeline {
   uint32_t viewport_width = 0;
   uint32_t viewport_height = 0;
   ComPtr<ID3D11VertexShader> vertex_shader;
+  ComPtr<ID3D11VertexShader> projected_vertex_shader;
   ComPtr<ID3D11PixelShader> pixel_shader;
+  ComPtr<ID3D11PixelShader> projected_pixel_shader;
   ComPtr<ID3D11PixelShader> solid_pixel_shader;
   ComPtr<ID3D11InputLayout> input_layout;
   ComPtr<ID3D11Buffer> constant_buffer;
@@ -504,10 +546,14 @@ struct ReplayD3D11Pipeline {
 
   bool CreateFixedPipelineObjects(ID3D11Device* device) {
     ComPtr<ID3DBlob> vs_blob;
+    ComPtr<ID3DBlob> projected_vs_blob;
     ComPtr<ID3DBlob> ps_blob;
+    ComPtr<ID3DBlob> projected_ps_blob;
     ComPtr<ID3DBlob> solid_ps_blob;
     if (!CompileShader(kVertexShaderHlsl, "main", "vs_5_0", vs_blob) ||
+        !CompileShader(kProjectedVertexShaderHlsl, "main", "vs_5_0", projected_vs_blob) ||
         !CompileShader(kPixelShaderHlsl, "main", "ps_5_0", ps_blob) ||
+        !CompileShader(kProjectedPixelShaderHlsl, "main", "ps_5_0", projected_ps_blob) ||
         !CompileShader(kSolidPixelShaderHlsl, "main", "ps_5_0", solid_ps_blob)) {
       return false;
     }
@@ -520,10 +566,28 @@ struct ReplayD3D11Pipeline {
       return false;
     }
 
+    hr = device->CreateVertexShader(projected_vs_blob->GetBufferPointer(),
+                                    projected_vs_blob->GetBufferSize(), nullptr,
+                                    &projected_vertex_shader);
+    if (FAILED(hr)) {
+      REXLOG_ERROR("SW2E native GPU replay failed to create projected vertex shader: 0x{:08x}",
+                   static_cast<uint32_t>(hr));
+      return false;
+    }
+
     hr = device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nullptr,
                                    &pixel_shader);
     if (FAILED(hr)) {
       REXLOG_ERROR("SW2E native GPU replay failed to create pixel shader: 0x{:08x}",
+                   static_cast<uint32_t>(hr));
+      return false;
+    }
+
+    hr = device->CreatePixelShader(projected_ps_blob->GetBufferPointer(),
+                                   projected_ps_blob->GetBufferSize(), nullptr,
+                                   &projected_pixel_shader);
+    if (FAILED(hr)) {
+      REXLOG_ERROR("SW2E native GPU replay failed to create projected pixel shader: 0x{:08x}",
                    static_cast<uint32_t>(hr));
       return false;
     }
@@ -647,7 +711,9 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
     context->OMSetBlendState(blend_state, nullptr, 0xFFFFFFFF);
 
     ID3D11ShaderResourceView* texture_view = nullptr;
-    if (draw.kind == ReplayDrawKind::kTexturedTriangles) {
+    const bool textured_draw = draw.kind == ReplayDrawKind::kTexturedTriangles ||
+                               draw.kind == ReplayDrawKind::kProjectedTexturedTriangles;
+    if (textured_draw) {
       texture_view = pipeline.GetTextureView(device, draw);
       if (!texture_view) {
         continue;
@@ -686,8 +752,16 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
 
     const UINT stride = sizeof(ReplayVertex);
     const UINT offset = 0;
-    if (draw.kind == ReplayDrawKind::kTexturedTriangles) {
-      context->PSSetShader(pipeline.pixel_shader.Get(), nullptr, 0);
+    if (draw.kind == ReplayDrawKind::kProjectedTexturedTriangles) {
+      context->VSSetShader(pipeline.projected_vertex_shader.Get(), nullptr, 0);
+    } else {
+      context->VSSetShader(pipeline.vertex_shader.Get(), nullptr, 0);
+    }
+    if (textured_draw) {
+      context->PSSetShader(draw.kind == ReplayDrawKind::kProjectedTexturedTriangles
+                               ? pipeline.projected_pixel_shader.Get()
+                               : pipeline.pixel_shader.Get(),
+                           nullptr, 0);
       context->PSSetShaderResources(0, 1, &texture_view);
     } else {
       ID3D11ShaderResourceView* null_view = nullptr;

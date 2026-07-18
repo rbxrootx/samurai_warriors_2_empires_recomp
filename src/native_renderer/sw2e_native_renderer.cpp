@@ -91,6 +91,23 @@ REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_include_solid_geometry, fals
                     "SM2/Native Render",
                     "Include opt-in solid rectangle-list and triangle-strip families in native replay");
 
+REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_include_transform_gaps, false,
+                    "SM2/Native Render",
+                    "Include experimental projected gameplay transform-gap draws in native replay");
+
+REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_transform_gaps_only, false,
+                    "SM2/Native Render",
+                    "Only capture experimental projected transform-gap draws in native replay");
+
+REXCVAR_DEFINE_INT32(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices, 32,
+                     "SM2/Native Render",
+                     "Minimum decoded vertices for projected transform-gap native replay draws")
+    .range(3, 100000);
+
+REXCVAR_DEFINE_BOOL(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps, false,
+                    "SM2/Native Render",
+                    "Normalize projected transform-gap replay bounds for debug visibility");
+
 namespace sw2e::native_renderer {
 namespace {
 
@@ -137,6 +154,16 @@ struct TransformGapCounter {
   uint32_t first_texture_tiled = 0;
   std::array<TransformGapAttribute, 4> attributes = {};
   uint32_t draws = 0;
+};
+
+struct ProjectionCandidate {
+  bool valid = false;
+  bool column_major = false;
+  float finite_ratio = 0.0f;
+  float inside_ratio = 0.0f;
+  float score = 0.0f;
+  std::array<uint32_t, 4> constant_indices = {};
+  std::array<std::array<float, 4>, 4> rows = {};
 };
 
 struct FrameStats {
@@ -216,6 +243,7 @@ constexpr uint32_t kBc3BlockWidth = 4;
 constexpr uint32_t kBc3BlockHeight = 4;
 constexpr uint32_t kBc3BytesPerBlock = 16;
 constexpr uint32_t kNativeGpuReplayDrawLogLimit = 32;
+constexpr uint32_t kNativeGpuReplayProjectedRejectLogLimit = 32;
 constexpr uint32_t kNativeGpuReplayPassLogInitial = 8;
 constexpr uint32_t kNativeGpuReplayPassLogInterval = 60;
 constexpr float kNativeGpuReplayWidth = 1280.0f;
@@ -446,6 +474,212 @@ bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_str
   return false;
 }
 
+std::array<float, 4> TransformNativeReplayPosition(
+    const gpu_replay::ReplayVertex& vertex,
+    const std::array<std::array<float, 4>, 4>& rows, bool column_major) {
+  const std::array<float, 4> source = {vertex.x, vertex.y, vertex.z, 1.0f};
+  std::array<float, 4> output = {};
+  if (column_major) {
+    for (uint32_t component = 0; component < 4; ++component) {
+      for (uint32_t column = 0; column < 4; ++column) {
+        output[component] += rows[column][component] * source[column];
+      }
+    }
+  } else {
+    for (uint32_t row = 0; row < 4; ++row) {
+      for (uint32_t component = 0; component < 4; ++component) {
+        output[row] += rows[row][component] * source[component];
+      }
+    }
+  }
+  return output;
+}
+
+ProjectionCandidate FindNativeReplayProjectionCandidate(
+    const DrawEvent& event, const std::vector<gpu_replay::ReplayVertex>& vertices) {
+  ProjectionCandidate best;
+  const uint32_t constant_count =
+      std::min(event.vertex_float_constant_summary_count,
+               rex::graphics::native_render::kMaxFloatConstantSummariesPerDraw);
+  if (constant_count < 4 || vertices.size() < 3) {
+    return best;
+  }
+
+  const size_t sample_stride = std::max<size_t>(1, vertices.size() / 256);
+  for (uint32_t a = 0; a + 3 < constant_count; ++a) {
+    for (uint32_t b = a + 1; b + 2 < constant_count; ++b) {
+      for (uint32_t c = b + 1; c + 1 < constant_count; ++c) {
+        for (uint32_t d = c + 1; d < constant_count; ++d) {
+          const std::array<uint32_t, 4> constants = {a, b, c, d};
+          std::array<std::array<float, 4>, 4> rows = {};
+          std::array<uint32_t, 4> constant_indices = {};
+          bool constants_finite = true;
+          for (uint32_t row = 0; row < 4; ++row) {
+            const auto& constant = event.vertex_float_constants[constants[row]];
+            constant_indices[row] = constant.constant_index;
+            for (uint32_t component = 0; component < 4; ++component) {
+              rows[row][component] = constant.values[component];
+              constants_finite = constants_finite && std::isfinite(rows[row][component]);
+            }
+          }
+          if (!constants_finite) {
+            continue;
+          }
+
+          for (bool column_major : {false, true}) {
+            uint32_t sampled_count = 0;
+            uint32_t valid_count = 0;
+            uint32_t inside_count = 0;
+            std::array<float, 3> mins = {std::numeric_limits<float>::max(),
+                                         std::numeric_limits<float>::max(),
+                                         std::numeric_limits<float>::max()};
+            std::array<float, 3> maxs = {-std::numeric_limits<float>::max(),
+                                         -std::numeric_limits<float>::max(),
+                                         -std::numeric_limits<float>::max()};
+
+            for (size_t vertex_index = 0; vertex_index < vertices.size() && sampled_count < 256;
+                 vertex_index += sample_stride, ++sampled_count) {
+              const std::array<float, 4> clip =
+                  TransformNativeReplayPosition(vertices[vertex_index], rows, column_major);
+              if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) ||
+                  !std::isfinite(clip[2]) || !std::isfinite(clip[3]) ||
+                  std::abs(clip[3]) < 1e-6f) {
+                continue;
+              }
+
+              const std::array<float, 3> ndc = {clip[0] / clip[3], clip[1] / clip[3],
+                                                clip[2] / clip[3]};
+              if (!std::isfinite(ndc[0]) || !std::isfinite(ndc[1]) ||
+                  !std::isfinite(ndc[2])) {
+                continue;
+              }
+              if (std::max({std::abs(ndc[0]), std::abs(ndc[1]), std::abs(ndc[2])}) >=
+                  1000.0f) {
+                continue;
+              }
+
+              ++valid_count;
+              for (uint32_t axis = 0; axis < 3; ++axis) {
+                mins[axis] = std::min(mins[axis], ndc[axis]);
+                maxs[axis] = std::max(maxs[axis], ndc[axis]);
+              }
+              if (std::abs(ndc[0]) <= 2.0f && std::abs(ndc[1]) <= 2.0f &&
+                  ndc[2] >= -10.0f && ndc[2] <= 10.0f) {
+                ++inside_count;
+              }
+            }
+
+            if (sampled_count == 0 || valid_count == 0) {
+              continue;
+            }
+
+            const float finite_ratio = float(valid_count) / float(sampled_count);
+            const float inside_ratio = float(inside_count) / float(valid_count);
+            const float extent_x = maxs[0] - mins[0];
+            const float extent_y = maxs[1] - mins[1];
+            const float extent_z = maxs[2] - mins[2];
+            const float xy_extent = extent_x + extent_y;
+            const float xy_area = extent_x * extent_y;
+            const float score = finite_ratio + inside_ratio +
+                                std::min(xy_extent, 4.0f) * 0.25f +
+                                std::min(xy_area, 4.0f) * 0.10f +
+                                std::min(extent_z, 10.0f) * 0.005f;
+            if (!best.valid || score > best.score) {
+              best.valid = true;
+              best.column_major = column_major;
+              best.finite_ratio = finite_ratio;
+              best.inside_ratio = inside_ratio;
+              best.score = score;
+              best.constant_indices = constant_indices;
+              best.rows = rows;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (best.finite_ratio < 0.5f || best.inside_ratio < 0.25f) {
+    best.valid = false;
+  }
+  return best;
+}
+
+bool ProjectNativeReplayVertex(gpu_replay::ReplayVertex& vertex,
+                               const ProjectionCandidate& projection) {
+  const std::array<float, 4> clip =
+      TransformNativeReplayPosition(vertex, projection.rows, projection.column_major);
+  if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[2]) ||
+      !std::isfinite(clip[3]) || std::abs(clip[3]) < 1e-6f) {
+    return false;
+  }
+
+  vertex.x = clip[0] / clip[3];
+  vertex.y = clip[1] / clip[3];
+  vertex.z = 0.5f;
+  vertex.w = 1.0f;
+  return std::isfinite(vertex.x) && std::isfinite(vertex.y);
+}
+
+bool FitReplayVerticesForDebug(std::vector<gpu_replay::ReplayVertex>& vertices) {
+  std::array<float, 3> mins = {std::numeric_limits<float>::max(),
+                               std::numeric_limits<float>::max(),
+                               std::numeric_limits<float>::max()};
+  std::array<float, 3> maxs = {-std::numeric_limits<float>::max(),
+                               -std::numeric_limits<float>::max(),
+                               -std::numeric_limits<float>::max()};
+  uint32_t valid_count = 0;
+  for (const auto& vertex : vertices) {
+    if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) || !std::isfinite(vertex.z)) {
+      continue;
+    }
+    const std::array<float, 3> position = {vertex.x, vertex.y, vertex.z};
+    for (uint32_t axis = 0; axis < 3; ++axis) {
+      mins[axis] = std::min(mins[axis], position[axis]);
+      maxs[axis] = std::max(maxs[axis], position[axis]);
+    }
+    ++valid_count;
+  }
+
+  if (valid_count < 3) {
+    return false;
+  }
+
+  uint32_t axis_x = 0;
+  uint32_t axis_y = 1;
+  float best_area = -1.0f;
+  for (const auto axes : {std::array<uint32_t, 2>{0, 1}, std::array<uint32_t, 2>{0, 2},
+                          std::array<uint32_t, 2>{1, 2}}) {
+    const float extent_a = maxs[axes[0]] - mins[axes[0]];
+    const float extent_b = maxs[axes[1]] - mins[axes[1]];
+    const float area = extent_a * extent_b;
+    if (std::isfinite(area) && area > best_area) {
+      best_area = area;
+      axis_x = axes[0];
+      axis_y = axes[1];
+    }
+  }
+
+  const float extent_x = maxs[axis_x] - mins[axis_x];
+  const float extent_y = maxs[axis_y] - mins[axis_y];
+  const float max_extent = std::max(extent_x, extent_y);
+  if (!std::isfinite(max_extent) || max_extent < 1e-6f) {
+    return false;
+  }
+
+  const float center_x = (mins[axis_x] + maxs[axis_x]) * 0.5f;
+  const float center_y = (mins[axis_y] + maxs[axis_y]) * 0.5f;
+  const float scale = 1.65f / max_extent;
+  for (auto& vertex : vertices) {
+    const std::array<float, 3> position = {vertex.x, vertex.y, vertex.z};
+    vertex.x = (position[axis_x] - center_x) * scale;
+    vertex.y = (position[axis_y] - center_y) * scale;
+    vertex.z = 0.5f;
+    vertex.w = 1.0f;
+  }
+  return true;
+}
+
 uint32_t IndexElementSizeBytes(uint32_t index_format) { return index_format == 0 ? 2u : 4u; }
 
 uint32_t IndexBytesNeeded(const DrawEvent& event) {
@@ -491,6 +725,10 @@ uint32_t SwapIndex32(uint32_t value, uint32_t endian) {
   }
 }
 
+bool IsNativeReplayRestartIndex(uint32_t index, uint32_t index_format) {
+  return index_format == 0 ? index == 0xFFFFu : index == 0x00FFFFFFu;
+}
+
 bool DecodeNativeReplayIndices(const DrawEvent& event, const rex::memory::Memory* memory,
                                std::vector<uint32_t>& indices, uint32_t& max_index) {
   indices.clear();
@@ -516,36 +754,48 @@ bool DecodeNativeReplayIndices(const DrawEvent& event, const rex::memory::Memory
       index = SwapIndex32(ReadLe32(element), event.index_endianness) & 0x00FFFFFFu;
     }
     indices.push_back(index);
-    max_index = std::max(max_index, index);
+    if (!IsNativeReplayRestartIndex(index, event.index_format)) {
+      max_index = std::max(max_index, index);
+    }
   }
   return true;
 }
 
 bool ExpandNativeReplayTriangleStripIndices(const std::vector<uint32_t>& strip_indices,
-                                            std::vector<uint32_t>& triangle_indices) {
+                                            std::vector<uint32_t>& triangle_indices,
+                                            uint32_t index_format = 0) {
   triangle_indices.clear();
   if (strip_indices.size() < 3) {
     return false;
   }
 
   triangle_indices.reserve((strip_indices.size() - 2) * 3);
-  for (size_t i = 0; i + 2 < strip_indices.size(); ++i) {
-    const uint32_t a = strip_indices[i + 0];
-    const uint32_t b = strip_indices[i + 1];
-    const uint32_t c = strip_indices[i + 2];
-    if (a == b || a == c || b == c) {
+  size_t segment_start = 0;
+  for (size_t i = 0; i <= strip_indices.size(); ++i) {
+    if (i != strip_indices.size() &&
+        !IsNativeReplayRestartIndex(strip_indices[i], index_format)) {
       continue;
     }
 
-    if ((i & 1) == 0) {
-      triangle_indices.push_back(a);
-      triangle_indices.push_back(b);
-      triangle_indices.push_back(c);
-    } else {
-      triangle_indices.push_back(b);
-      triangle_indices.push_back(a);
-      triangle_indices.push_back(c);
+    for (size_t j = segment_start; j + 2 < i; ++j) {
+      const uint32_t a = strip_indices[j + 0];
+      const uint32_t b = strip_indices[j + 1];
+      const uint32_t c = strip_indices[j + 2];
+      if (a == b || a == c || b == c) {
+        continue;
+      }
+
+      if (((j - segment_start) & 1) == 0) {
+        triangle_indices.push_back(a);
+        triangle_indices.push_back(b);
+        triangle_indices.push_back(c);
+      } else {
+        triangle_indices.push_back(b);
+        triangle_indices.push_back(a);
+        triangle_indices.push_back(c);
+      }
     }
+    segment_start = i + 1;
   }
 
   return !triangle_indices.empty();
@@ -729,11 +979,21 @@ uint64_t NativeGpuReplayTextureBytesKey(const TextureFetchSummary& fetch,
 
 uint32_t NativeGpuReplayPassScore(const std::vector<gpu_replay::ReplayDraw>& draws) {
   uint32_t textured_draws = 0;
+  uint32_t projected_draws = 0;
+  uint32_t vertex_score = 0;
+  uint32_t index_score = 0;
   for (const auto& draw : draws) {
     textured_draws += draw.kind == gpu_replay::ReplayDrawKind::kTexturedTriangles ? 1 : 0;
+    projected_draws +=
+        draw.kind == gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles ? 1 : 0;
+    vertex_score =
+        std::min<uint32_t>(vertex_score + static_cast<uint32_t>(draw.vertices.size()), 100000u);
+    index_score =
+        std::min<uint32_t>(index_score + static_cast<uint32_t>(draw.indices.size()), 100000u);
   }
 
-  return textured_draws * 1000u + static_cast<uint32_t>(draws.size());
+  return projected_draws * 100000u + textured_draws * 1000u + index_score + vertex_score +
+         static_cast<uint32_t>(draws.size());
 }
 
 const VertexFetchSummary* FindNativeReplayTexturedVertexFetch(const DrawEvent& event) {
@@ -928,10 +1188,25 @@ class Sidecar final : public EventSink {
     native_gpu_replay_flushed_ = false;
     native_gpu_replay_live_present_count_ = 0;
     native_gpu_replay_captured_draw_log_count_ = 0;
+    native_gpu_replay_projected_reject_log_count_ = 0;
     native_gpu_replay_completed_pass_count_ = 0;
     suppress_current_backend_swap_ = false;
     CloseSampleMetadata();
     ResetFrame(stats_, frame_index);
+    if (REXCVAR_GET(sw2e_native_renderer_gpu_replay)) {
+      REXLOG_INFO(
+          "SW2E native GPU replay enabled: draw_limit={} solid={} transform_gaps={} "
+          "transform_gaps_only={} transform_gap_min_vertices={} debug_fit={} live_present={} "
+          "output={}",
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_draw_limit),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_transform_gaps),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gaps_only),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps),
+          REXCVAR_GET(sw2e_native_renderer_gpu_replay_live_present),
+          std::string(REXCVAR_GET(sw2e_native_renderer_gpu_replay_path)));
+    }
   }
 
   void CloseSampleMetadata() {
@@ -1090,9 +1365,19 @@ class Sidecar final : public EventSink {
       return;
     }
 
-    bool captured = CaptureNativeGpuReplayTexturedDraw(event, context);
-    if (!captured && REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry)) {
-      captured = CaptureNativeGpuReplaySolidDraw(event, context);
+    const bool transform_gaps_only =
+        REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gaps_only);
+    bool captured = false;
+    if (transform_gaps_only) {
+      captured = CaptureNativeGpuReplayProjectedTransformGapDraw(event, context);
+    } else {
+      captured = CaptureNativeGpuReplayTexturedDraw(event, context);
+      if (!captured && REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry)) {
+        captured = CaptureNativeGpuReplaySolidDraw(event, context);
+      }
+      if (!captured && REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_transform_gaps)) {
+        captured = CaptureNativeGpuReplayProjectedTransformGapDraw(event, context);
+      }
     }
     if (!captured) {
       return;
@@ -1163,7 +1448,8 @@ class Sidecar final : public EventSink {
     if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
       std::vector<uint32_t> triangle_indices;
       const bool expanded = event.indexed
-                                ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices)
+                                ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
+                                                                         event.index_format)
                                 : BuildNativeReplayTriangleStripIndices(event, triangle_indices);
       if (!expanded) {
         native_gpu_replay_draw_keys_.erase(key);
@@ -1228,6 +1514,171 @@ class Sidecar final : public EventSink {
             ? (event.indexed ? "indexed textured strip" : "textured strip")
             : (event.indexed ? "indexed textured" : "textured"));
     return true;
+  }
+
+  bool CaptureNativeGpuReplayProjectedTransformGapDraw(const DrawEvent& event,
+                                                       const DrawEventContext& context) {
+    if (!REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_transform_gaps)) {
+      return false;
+    }
+    const NativeReplaySupport replay_support = ClassifyNativeReplaySupport(event);
+    if (!HasNativeReplayColorOutput(event) ||
+        replay_support != NativeReplaySupport::kUnsupportedTransform) {
+      return false;
+    }
+    if (!IsNativeReplayTexturedTriangleShape(event)) {
+      return RejectNativeGpuReplayProjectedTransformGap(event, "shape", replay_support);
+    }
+
+    const VertexFetchSummary* vertex_fetch = FindDecodableNativeReplayTexturedVertexFetch(event);
+    if (!vertex_fetch) {
+      return RejectNativeGpuReplayProjectedTransformGap(event, "vertex_fetch", replay_support);
+    }
+    if (IsNativeReplayScreenSpaceTexturedVertexFetch(*vertex_fetch)) {
+      return RejectNativeGpuReplayProjectedTransformGap(event, "screen_space", replay_support);
+    }
+
+    std::optional<TextureDumpPlan> texture_plan;
+    const TextureFetchSummary* texture_fetch = FindNativeReplayTextureFetch(event, texture_plan);
+    if (!texture_fetch || !texture_plan) {
+      return RejectNativeGpuReplayProjectedTransformGap(event, "texture_fetch", replay_support);
+    }
+
+    const uint64_t key = (uint64_t(event.frame_index) << 32) | event.draw_index;
+    if (!native_gpu_replay_draw_keys_.insert(key).second) {
+      return false;
+    }
+
+    std::vector<uint32_t> indices;
+    uint32_t max_index = 0;
+    if (event.indexed) {
+      if (!DecodeNativeReplayIndices(event, context.memory, indices, max_index)) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return RejectNativeGpuReplayProjectedTransformGap(event, "index_decode", replay_support);
+      }
+    } else {
+      max_index = event.index_count - 1;
+    }
+
+    if (event.primitive_type == kXenosPrimitiveTriangleStrip) {
+      std::vector<uint32_t> triangle_indices;
+      const bool expanded = event.indexed
+                                ? ExpandNativeReplayTriangleStripIndices(indices, triangle_indices,
+                                                                         event.index_format)
+                                : BuildNativeReplayTriangleStripIndices(event, triangle_indices);
+      if (!expanded) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return RejectNativeGpuReplayProjectedTransformGap(event, "strip_expand", replay_support);
+      }
+      indices = std::move(triangle_indices);
+    }
+
+    const uint32_t vertex_count = event.indexed ? (max_index + 1) : event.index_count;
+    const int32_t min_projected_vertices =
+        REXCVAR_GET(sw2e_native_renderer_gpu_replay_transform_gap_min_vertices);
+    if (vertex_count < static_cast<uint32_t>(std::max(min_projected_vertices, 3))) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "min_vertices", replay_support);
+    }
+
+    std::vector<uint8_t> vertex_bytes;
+    const uint32_t vertex_stride_bytes = vertex_fetch->stride_words * 4;
+    const uint64_t vertex_bytes_needed64 = uint64_t(vertex_count) * vertex_stride_bytes;
+    if (vertex_count == 0 || vertex_bytes_needed64 > UINT32_MAX ||
+        vertex_bytes_needed64 > vertex_fetch->size_bytes) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "vertex_size", replay_support);
+    }
+    const uint32_t vertex_bytes_needed = static_cast<uint32_t>(vertex_bytes_needed64);
+    if (!CopyPhysicalMemorySample(context.memory, vertex_fetch->address_bytes, vertex_bytes_needed,
+                                  vertex_bytes)) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "vertex_copy", replay_support);
+    }
+
+    gpu_replay::ReplayDraw replay_draw;
+    replay_draw.kind = gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles;
+    replay_draw.frame = event.frame_index;
+    replay_draw.draw = event.draw_index;
+    replay_draw.rt0_blendcontrol = 0x00010001;
+    replay_draw.rt0_write_mask = 0x0F;
+    replay_draw.indices = std::move(indices);
+    replay_draw.vertices.reserve(vertex_count);
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+      const uint8_t* vertex = vertex_bytes.data() + size_t(i) * vertex_stride_bytes;
+      gpu_replay::ReplayVertex replay_vertex;
+      if (!DecodeNativeReplayTexturedVertex(vertex, vertex_stride_bytes, *vertex_fetch,
+                                            replay_vertex)) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return RejectNativeGpuReplayProjectedTransformGap(event, "vertex_decode", replay_support);
+      }
+      replay_draw.vertices.push_back(replay_vertex);
+    }
+
+    const ProjectionCandidate projection =
+        FindNativeReplayProjectionCandidate(event, replay_draw.vertices);
+    if (!projection.valid) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "projection", replay_support);
+    }
+    if (REXCVAR_GET(sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps)) {
+      if (!FitReplayVerticesForDebug(replay_draw.vertices)) {
+        native_gpu_replay_draw_keys_.erase(key);
+        return RejectNativeGpuReplayProjectedTransformGap(event, "debug_fit", replay_support);
+      }
+    } else {
+      for (auto& vertex : replay_draw.vertices) {
+        if (!ProjectNativeReplayVertex(vertex, projection)) {
+          native_gpu_replay_draw_keys_.erase(key);
+          return RejectNativeGpuReplayProjectedTransformGap(event, "project_vertex", replay_support);
+        }
+      }
+    }
+
+    std::shared_ptr<const std::vector<uint8_t>> texture_bytes_ref =
+        CaptureNativeGpuReplayTextureBytes(*texture_fetch, *texture_plan, context.memory);
+    if (!texture_bytes_ref) {
+      native_gpu_replay_draw_keys_.erase(key);
+      return RejectNativeGpuReplayProjectedTransformGap(event, "texture_copy", replay_support);
+    }
+
+    replay_draw.texture.source_base_address = texture_fetch->base_address_bytes;
+    replay_draw.texture.width = texture_fetch->width;
+    replay_draw.texture.height = texture_fetch->height;
+    replay_draw.texture.width_blocks = texture_plan->width_blocks;
+    replay_draw.texture.height_blocks = texture_plan->height_blocks;
+    replay_draw.texture.row_pitch_bytes = texture_plan->row_pitch_bytes;
+    replay_draw.texture.endian = texture_fetch->endian;
+    replay_draw.texture.bytes_ref = std::move(texture_bytes_ref);
+    QueueNativeGpuReplayDraw(std::move(replay_draw), "projected transform gap");
+    if (native_gpu_replay_captured_draw_log_count_ <= kNativeGpuReplayDrawLogLimit) {
+      REXLOG_INFO(
+          "SW2E projected transform gap candidate frame {} draw {} constants=c{},c{},c{},c{} "
+          "orientation={} finite={:.3f} inside={:.3f} score={:.3f}",
+          event.frame_index, event.draw_index, projection.constant_indices[0],
+          projection.constant_indices[1], projection.constant_indices[2],
+          projection.constant_indices[3], projection.column_major ? "column" : "row",
+          projection.finite_ratio, projection.inside_ratio, projection.score);
+    }
+    return true;
+  }
+
+  bool RejectNativeGpuReplayProjectedTransformGap(const DrawEvent& event, const char* reason,
+                                                  NativeReplaySupport replay_support) {
+    if (native_gpu_replay_projected_reject_log_count_ <
+        kNativeGpuReplayProjectedRejectLogLimit) {
+      REXLOG_INFO(
+          "SW2E projected transform gap rejected frame {} draw {}: {} support={} prim={} "
+          "indexed={} index_count={} vfetches={} tfetches={}",
+          event.frame_index, event.draw_index, reason, NativeReplaySupportName(replay_support),
+          event.primitive_type, event.indexed, event.index_count, event.vertex_fetch_summary_count,
+          event.texture_fetch_summary_count);
+    } else if (native_gpu_replay_projected_reject_log_count_ ==
+               kNativeGpuReplayProjectedRejectLogLimit) {
+      REXLOG_INFO("SW2E projected transform gap suppressing further rejection logs");
+    }
+    ++native_gpu_replay_projected_reject_log_count_;
+    return false;
   }
 
   bool CaptureNativeGpuReplaySolidDraw(const DrawEvent& event, const DrawEventContext& context) {
@@ -2010,6 +2461,7 @@ class Sidecar final : public EventSink {
   bool native_gpu_replay_flushed_ = false;
   uint32_t native_gpu_replay_live_present_count_ = 0;
   uint32_t native_gpu_replay_captured_draw_log_count_ = 0;
+  uint32_t native_gpu_replay_projected_reject_log_count_ = 0;
   uint32_t native_gpu_replay_completed_pass_count_ = 0;
   bool suppress_current_backend_swap_ = false;
   void* native_window_handle_ = nullptr;

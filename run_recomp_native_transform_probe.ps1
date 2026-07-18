@@ -5,6 +5,9 @@ param(
   [switch]$DumpGapSamples,
   [int]$SampleLimit = 128,
   [int]$SampleBytes = 65536,
+  [switch]$ProjectedGapReplay,
+  [int]$ReplayDrawLimit = 12,
+  [int]$ProjectedGapMinVertices = 32,
   [switch]$ExternalPulseInput,
   [switch]$NoMoveWindow,
   [switch]$KeepOpen
@@ -27,6 +30,7 @@ $pulseScript = Join-Path $root "tools\pulse_recomp_input.ps1"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $logFile = Join-Path $root "runtime.native-transform-probe-$timestamp.log"
 $sampleRoot = Join-Path $root "extracted\native_render_samples\native_gap_probe_$timestamp"
+$replayPath = Join-Path $root "extracted\native_render_samples\native_projected_gap_replay_$timestamp.bmp"
 
 if (-not (Test-Path $exe)) {
   throw "Recomp executable was not found: $exe"
@@ -111,6 +115,21 @@ if ($DumpGapSamples) {
     "--sw2e_native_renderer_gpu_replay=false",
     "--sw2e_auto_boot_input=true",
     "--sw2e_auto_probe_input=true"
+  )
+}
+
+if ($ProjectedGapReplay) {
+  $probeArgs = @($probeArgs | Where-Object { $_ -ne "--sw2e_native_renderer_gpu_replay=false" })
+  $probeArgs += @(
+    "--sw2e_native_renderer_gpu_replay=true",
+    "--sw2e_native_renderer_gpu_replay_include_transform_gaps=true",
+    "--sw2e_native_renderer_gpu_replay_transform_gaps_only=true",
+    "--sw2e_native_renderer_gpu_replay_transform_gap_min_vertices=$ProjectedGapMinVertices",
+    "--sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps=true",
+    "--sw2e_native_renderer_gpu_replay_draw_limit=$ReplayDrawLimit",
+    "--sw2e_native_renderer_gpu_replay_path=$replayPath",
+    "--sw2e_native_renderer_gpu_replay_live_present=false",
+    "--sw2e_native_renderer_gpu_replay_suppress_backend_swap=false"
   )
 }
 
@@ -259,6 +278,12 @@ if (Test-Path $sampleManifest) {
     }).Count
 }
 
+$replayExists = Test-Path $replayPath
+$replayBytes = 0
+if ($replayExists) {
+  $replayBytes = (Get-Item $replayPath).Length
+}
+
 $eventTouched = @()
 foreach ($candidate in $eventCandidates) {
   if (-not (Test-Path $candidate)) {
@@ -289,6 +314,9 @@ if ($process.HasExited) {
   SampleSupportCounts = $sampleSupportCounts
   SampleVertexConstantRows = $sampleVertexConstantRows
   SamplePixelConstantRows = $samplePixelConstantRows
+  ReplayPath = $(if ($ProjectedGapReplay) { $replayPath } else { $null })
+  ReplayExists = $replayExists
+  ReplayBytes = $replayBytes
   TransformGapCount = $transformMatches.Count
   LayoutGapCount = $layoutMatches.Count
   FirstTransformGaps = @($transformMatches | Select-Object -First 6 | ForEach-Object { $_.Line })

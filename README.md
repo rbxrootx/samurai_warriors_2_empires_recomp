@@ -37,6 +37,9 @@ References:
 - Native-renderer sidecar work can observe draw/swap events, hash or dump bounded guest memory,
   classify render-state buckets, and replay supported title/menu draw families through a native
   D3D11 path.
+- The opt-in projected-gap replay can now submit selected gameplay transform-gap meshes through
+  D3D11 debug-fit output. This is visibility scaffolding for native gameplay rendering, not the
+  final camera/shader path.
 
 Full native gameplay rendering is not complete yet. The next big graphics milestone is correlating
 indexed `triangle_strip` battle draws and stride-8/9/10 vertex layouts with decoded G1M meshes,
@@ -100,6 +103,8 @@ Useful launchers:
   reports concise `SW2E native transform gap` lines for the next native-renderer work.
 - `run_recomp_native_gap_sample_probe.bat` captures a bounded gap-only `samples.jsonl` plus vertex,
   index, and texture bytes for unsupported native gameplay draws.
+- `run_recomp_native_projected_gap_replay.bat` writes an opt-in native D3D11 debug BMP for selected
+  gameplay transform-gap draws without enabling the large JSON event stream.
 
 ## Modding Direction
 
@@ -124,6 +129,7 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   `tools/export_native_gap_obj.py`.
 - Decode linear BC3/DXT5 menu textures.
 - Replay supported title/menu textured and solid draw families through D3D11.
+- Replay selected gameplay transform-gap meshes through an experimental D3D11 debug-fit path.
 - Keep the compatibility renderer as the reference path while native coverage grows.
 
 Near-term work:

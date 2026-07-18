@@ -6,7 +6,7 @@
 namespace sw2e::hooks {
 namespace {
 
-constexpr std::array<FunctionInfo, 111> kKnownFunctions{{
+constexpr std::array<FunctionInfo, 112> kKnownFunctions{{
     {0x8210D9F8, "sub_8210D9F8", "archive LZP2 postprocess", FunctionConfidence::Confirmed,
      "Called after archive sector reads; checks byte-swapped LZP2 magic 0x32505A4C, copies compressed data to scratch, and calls the in-place LZP2 decoder."},
     {0x8210DA80, "sub_8210DA80", "archive table shutdown", FunctionConfidence::Confirmed,
@@ -200,6 +200,9 @@ constexpr std::array<FunctionInfo, 111> kKnownFunctions{{
     {0x82369D30, "sub_82369D30", "movie vertex-stream packet companion",
      FunctionConfidence::Observed,
      "Adjacent generated helper called by later vertex-stream setup paths."},
+    {0x8236B8B8, "sub_8236B8B8", "PIX trace capture state machine",
+     FunctionConfidence::Observed,
+     "Reached by PIX trace/capture strings including PIX!Trace, PIX!Gpu, crashdump.pix2, and capture begin/end messages; likely renderer diagnostic capture scaffolding."},
     {0x8236BBF8, "sub_8236BBF8", "renderer debug command parser",
      FunctionConfidence::Observed,
      "Switches on the byte at input+4 for single-letter commands a/c/d/f/g/m/p/t/x and writes a response with sprintf; project hook logs command and response buffers."},

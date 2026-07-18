@@ -10,6 +10,7 @@ namespace sw2e::native_renderer::gpu_replay {
 enum class ReplayDrawKind : uint32_t {
   kTexturedTriangles = 0,
   kSolidTriangles = 1,
+  kProjectedTexturedTriangles = 2,
 };
 
 struct ReplayVertex {

@@ -98,6 +98,10 @@ IDA confirms `0x8236C020` registers that parser as diagnostic command `28` and r
 `PIX!OK`, `PIX!NO`, and capture-ended markers, so treat it as PIX/render diagnostics rather than a
 confirmed gameplay debug menu.
 
+The nearby `0x8236B8B8` lead is reached from PIX trace/capture strings including `PIX!Trace`,
+`PIX!Gpu`, `crashdump.pix2`, and capture begin/end messages. It is currently mapped as a PIX
+trace/capture state machine candidate, not an enabled game-facing debug tool.
+
 `runtime.debug-hooks-smoke.log` is the first validation run for these hooks. The rebuilt executable
 linked successfully, stayed alive for a 25-second muted smoke run, and logged `0x8236E780` from the
 graphics init path with no fatal/assert/crash/dirty-disc matches. The `DbgPrint` and command-parser
@@ -162,6 +166,7 @@ IDA-confirmed archive/file landmarks:
 | `0x82286B30` | `sw2e_stage_bundle_subfile_instantiator` | Walks loaded stage bundle offsets and creates runtime stage subasset objects. |
 | `0x8227AE00` | `sw2e_battle_stage_scene_bootstrap` | Initializes battle-stage state and loads the three-entry stage set. |
 | `0x822A85C0` | `sw2e_japan_map_resource_selector` | Selects Japan-map UI resources from the `0x82054C58` archive-id table. |
+| `0x8236B8B8` | `sw2e_pix_trace_capture_state_machine` | PIX trace/capture state machine reached from `PIX!Trace`, `PIX!Gpu`, `crashdump.pix2`, and capture begin/end strings. |
 | `0x8236BBF8` | `sw2e_renderer_debug_command_parser` | Surviving renderer diagnostic parser for single-letter commands `a/c/d/f/g/m/p/t/x`. |
 | `0x8236BE60` | `sw2e_pix_performance_marker_callback` | PIX-style render event/timing callback registered by the graphics diagnostics path. |
 | `0x8236C020` | `sw2e_pix_diagnostic_callback_registration` | Registers the PIX command parser and performance callback during graphics initialization. |

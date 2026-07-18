@@ -378,6 +378,25 @@
   `VS=0x45C4DDDAAA10F75F / PS=0x7703E4142DFBD4D4`, vertex constants `c0-c7`, and pixel constants
   `c0,c1,c254,c255`. The projection candidates are leads for the native gameplay vertex shader, not
   proof of the final MVP formula.
+- `run_recomp_native_projected_gap_replay.bat` is the first opt-in native D3D11 gameplay-gap replay.
+  It leaves `native_render_events=false`, captures only `unsupported_textured_transform` draws, and
+  writes a BMP instead of a large JSON dump. Validation
+  `runtime.native-transform-probe-20260718-005916.log` exited with code `0`, touched no JSON event
+  file, wrote
+  `extracted\native_render_samples\native_projected_gap_replay_20260718-005916.bmp`, and submitted
+  12 captured D3D11 draws. Pixel stats were `1280x720`, `370263` nonzero RGB channels out of
+  `2764800`, mean RGB `16.4959`, and max RGB `182`; visually the BMP contains a character-shaped
+  gameplay mesh.
+- The projected-gap replay exposed and fixed the key indexed-strip rejection: SW2E gameplay
+  triangle strips use `0xFFFF` primitive restart markers. The replay now ignores restart markers
+  when computing indexed vertex bounds and splits strips at restart markers before uploading
+  triangle-list indices. Before that fix, valid gameplay draws were being rejected as oversized
+  `vertex_size` copies because `0xFFFF` was mistaken for vertex index `65535`.
+- The projected-gap BMP is not a final camera solve. Current validation uses
+  `sw2e_native_renderer_gpu_replay_debug_fit_projected_gaps=true`, which fits raw decoded vertex
+  axes into visible clip space. It proves live gameplay mesh submission through native D3D11, but the
+  real next renderer work is still constant mapping, vertex-shader transform replacement, depth and
+  blend state, material translation, and render-target ownership.
 - The first guarded presenter handoff is now implemented behind
   `--sw2e_native_renderer_gpu_replay_suppress_backend_swap=true`, defaulting to `false`. The shared
   ReXGlue event stream lets the SW2E sidecar return a per-swap suppression decision, and
@@ -506,6 +525,10 @@
   registers `0x8236BE60` as callback id `47`. The surrounding strings are PIX-flavored
   (`PIX!Gpu`, `PIX!Trace`, `PIX!OK`, `PIX!NO`, and capture-ended markers), so this is useful render
   diagnostics infrastructure rather than a confirmed gameplay debug menu.
+- A new read-only debug-tooling pass found `0x8236B8B8` as a PIX trace/capture state-machine lead.
+  It is reached from strings such as `PIX Trace Capture Begin.\n`, `PIX!Trace`, `PIX!Gpu`, and
+  `crashdump.pix2`. This should be named/commented in IDA next, then validated by searching runtime
+  logs for `PIX` and `SM2 guest DbgPrint` during longer render probes.
 - `0x8236DCE0`, `0x8236DF60`, and `0x8236E780` form the current graphics/device diagnostic cluster.
   The cluster calls config/device probes such as `ExGetXConfigSetting`, emits debug text, and has a
   missing-device trap path. These are diagnostics, not a confirmed gameplay debug menu.
