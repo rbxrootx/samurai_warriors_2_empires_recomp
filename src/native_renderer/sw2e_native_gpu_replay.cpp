@@ -490,6 +490,34 @@ uint64_t BlendStateKey(uint32_t blend_control, uint8_t write_mask) {
   return (uint64_t(blend_control) << 8) | uint64_t(write_mask & 0x0F);
 }
 
+D3D11_COMPARISON_FUNC MapXenosCompareFunction(uint32_t compare_function) {
+  if (compare_function <= 7) {
+    return static_cast<D3D11_COMPARISON_FUNC>(uint32_t(D3D11_COMPARISON_NEVER) +
+                                              compare_function);
+  }
+  return D3D11_COMPARISON_ALWAYS;
+}
+
+bool DepthControlStencilEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x1) != 0;
+}
+
+bool DepthControlZEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x2) != 0;
+}
+
+bool DepthControlZWriteEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x4) != 0;
+}
+
+uint32_t DepthControlZFunc(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol >> 4) & 0x7;
+}
+
+uint32_t DepthStateKey(uint32_t normalized_depthcontrol) {
+  return normalized_depthcontrol & 0x7F;
+}
+
 ID3D11BlendState* GetReplayBlendState(
     ID3D11Device* device, std::unordered_map<uint64_t, ComPtr<ID3D11BlendState>>& cache,
     uint32_t blend_control, uint8_t write_mask) {
@@ -524,6 +552,45 @@ ID3D11BlendState* GetReplayBlendState(
   return state_ptr;
 }
 
+ID3D11DepthStencilState* GetReplayDepthStencilState(
+    ID3D11Device* device, std::unordered_map<uint32_t, ComPtr<ID3D11DepthStencilState>>& cache,
+    uint32_t normalized_depthcontrol) {
+  const uint32_t key = DepthStateKey(normalized_depthcontrol);
+  auto existing = cache.find(key);
+  if (existing != cache.end()) {
+    return existing->second.Get();
+  }
+
+  const bool z_enable = DepthControlZEnable(normalized_depthcontrol);
+  const bool z_write_enable = DepthControlZWriteEnable(normalized_depthcontrol);
+  const uint32_t z_func = z_enable ? DepthControlZFunc(normalized_depthcontrol) : 7;
+  const bool depth_needed = z_enable && (z_func != 7 || z_write_enable);
+
+  D3D11_DEPTH_STENCIL_DESC depth_desc = {};
+  depth_desc.DepthEnable = depth_needed ? TRUE : FALSE;
+  depth_desc.DepthWriteMask =
+      z_write_enable ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+  depth_desc.DepthFunc = MapXenosCompareFunction(z_func);
+  depth_desc.StencilEnable = FALSE;
+
+  ComPtr<ID3D11DepthStencilState> state;
+  HRESULT hr = device->CreateDepthStencilState(&depth_desc, &state);
+  if (FAILED(hr)) {
+    REXLOG_WARN("SW2E native GPU replay failed to create depth state 0x{:08x}: 0x{:08x}",
+                normalized_depthcontrol, static_cast<uint32_t>(hr));
+    return nullptr;
+  }
+
+  if (DepthControlStencilEnable(normalized_depthcontrol)) {
+    REXLOG_WARN("SW2E native GPU replay ignoring stencil bits in depthcontrol 0x{:08x}",
+                normalized_depthcontrol);
+  }
+
+  ID3D11DepthStencilState* state_ptr = state.Get();
+  cache.emplace(key, std::move(state));
+  return state_ptr;
+}
+
 struct ReplayD3D11Pipeline {
   uint32_t viewport_width = 0;
   uint32_t viewport_height = 0;
@@ -538,6 +605,7 @@ struct ReplayD3D11Pipeline {
   ComPtr<ID3D11SamplerState> sampler;
   ComPtr<ID3D11RasterizerState> rasterizer_state;
   std::unordered_map<uint64_t, ComPtr<ID3D11BlendState>> blend_state_cache;
+  std::unordered_map<uint32_t, ComPtr<ID3D11DepthStencilState>> depth_state_cache;
   std::unordered_map<uint64_t, ComPtr<ID3D11ShaderResourceView>> texture_view_cache;
 
   bool Ensure(ID3D11Device* device, uint32_t width, uint32_t height) {
@@ -801,6 +869,7 @@ ComPtr<ID3D11Buffer> CreatePixelLerpConstantBuffer(ID3D11Device* device,
 
 uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context,
                               ID3D11RenderTargetView* render_target,
+                              ID3D11DepthStencilView* depth_stencil,
                               ReplayD3D11Pipeline& pipeline,
                               const std::vector<ReplayDraw>& draws, uint32_t width,
                               uint32_t height) {
@@ -812,7 +881,10 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
 
   const float clear_color[] = {0.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(render_target, clear_color);
-  context->OMSetRenderTargets(1, &render_target, nullptr);
+  if (depth_stencil) {
+    context->ClearDepthStencilView(depth_stencil, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+  }
+  context->OMSetRenderTargets(1, &render_target, depth_stencil);
   context->RSSetState(pipeline.rasterizer_state.Get());
   D3D11_VIEWPORT viewport = {};
   viewport.Width = static_cast<float>(width);
@@ -841,6 +913,12 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
       continue;
     }
     context->OMSetBlendState(blend_state, nullptr, 0xFFFFFFFF);
+    ID3D11DepthStencilState* depth_state =
+        GetReplayDepthStencilState(device, pipeline.depth_state_cache, draw.normalized_depthcontrol);
+    if (!depth_state) {
+      continue;
+    }
+    context->OMSetDepthStencilState(depth_state, 0);
 
     ID3D11ShaderResourceView* texture_view = nullptr;
     const bool textured_draw = draw.kind == ReplayDrawKind::kTexturedTriangles ||
@@ -980,9 +1058,36 @@ bool RenderMenuReplayD3D11Win32(const std::vector<ReplayDraw>& draws,
     return false;
   }
 
+  D3D11_TEXTURE2D_DESC depth_desc = {};
+  depth_desc.Width = width;
+  depth_desc.Height = height;
+  depth_desc.MipLevels = 1;
+  depth_desc.ArraySize = 1;
+  depth_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+  depth_desc.SampleDesc.Count = 1;
+  depth_desc.Usage = D3D11_USAGE_DEFAULT;
+  depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+  ComPtr<ID3D11Texture2D> depth_texture;
+  hr = device->CreateTexture2D(&depth_desc, nullptr, &depth_texture);
+  if (FAILED(hr)) {
+    REXLOG_ERROR("SW2E native GPU replay failed to create depth texture: 0x{:08x}",
+                 static_cast<uint32_t>(hr));
+    return false;
+  }
+
+  ComPtr<ID3D11DepthStencilView> depth_stencil;
+  hr = device->CreateDepthStencilView(depth_texture.Get(), nullptr, &depth_stencil);
+  if (FAILED(hr)) {
+    REXLOG_ERROR("SW2E native GPU replay failed to create depth-stencil view: 0x{:08x}",
+                 static_cast<uint32_t>(hr));
+    return false;
+  }
+
   ReplayD3D11Pipeline pipeline;
-  const uint32_t drawn = DrawReplayDrawsD3D11(device.Get(), context.Get(), render_target.Get(),
-                                             pipeline, draws, width, height);
+  const uint32_t drawn =
+      DrawReplayDrawsD3D11(device.Get(), context.Get(), render_target.Get(), depth_stencil.Get(),
+                           pipeline, draws, width, height);
 
   if (drawn == 0) {
     REXLOG_WARN("SW2E native GPU replay produced no draw calls");
@@ -1037,6 +1142,8 @@ struct LivePreviewState {
   ComPtr<ID3D11DeviceContext> context;
   ComPtr<IDXGISwapChain> swap_chain;
   ComPtr<ID3D11RenderTargetView> render_target;
+  ComPtr<ID3D11Texture2D> depth_texture;
+  ComPtr<ID3D11DepthStencilView> depth_stencil;
   ReplayD3D11Pipeline pipeline;
 
   bool Initialize(HWND parent_hwnd, uint32_t requested_width, uint32_t requested_height) {
@@ -1142,12 +1249,13 @@ struct LivePreviewState {
   }
 
   bool Present(const std::vector<ReplayDraw>& draws) {
-    if (!device || !context || !swap_chain || !render_target) {
+    if (!device || !context || !swap_chain || !render_target || !depth_stencil) {
       return false;
     }
 
-    const uint32_t drawn = DrawReplayDrawsD3D11(device.Get(), context.Get(), render_target.Get(),
-                                                pipeline, draws, width, height);
+    const uint32_t drawn =
+        DrawReplayDrawsD3D11(device.Get(), context.Get(), render_target.Get(), depth_stencil.Get(),
+                             pipeline, draws, width, height);
     if (drawn == 0) {
       REXLOG_WARN("SW2E native GPU live replay produced no draw calls");
       return false;
@@ -1180,6 +1288,8 @@ struct LivePreviewState {
 
     context->OMSetRenderTargets(0, nullptr, nullptr);
     render_target.Reset();
+    depth_stencil.Reset();
+    depth_texture.Reset();
 
     SetWindowPos(hwnd, HWND_TOP, 0, 0, static_cast<int>(requested_width),
                  static_cast<int>(requested_height),
@@ -1214,6 +1324,29 @@ struct LivePreviewState {
     hr = device->CreateRenderTargetView(back_buffer.Get(), nullptr, &render_target);
     if (FAILED(hr)) {
       REXLOG_ERROR("SW2E native GPU live replay failed to create back-buffer RTV: 0x{:08x}",
+                   static_cast<uint32_t>(hr));
+      return false;
+    }
+
+    D3D11_TEXTURE2D_DESC depth_desc = {};
+    depth_desc.Width = width;
+    depth_desc.Height = height;
+    depth_desc.MipLevels = 1;
+    depth_desc.ArraySize = 1;
+    depth_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depth_desc.SampleDesc.Count = 1;
+    depth_desc.Usage = D3D11_USAGE_DEFAULT;
+    depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    hr = device->CreateTexture2D(&depth_desc, nullptr, &depth_texture);
+    if (FAILED(hr)) {
+      REXLOG_ERROR("SW2E native GPU live replay failed to create depth texture: 0x{:08x}",
+                   static_cast<uint32_t>(hr));
+      return false;
+    }
+
+    hr = device->CreateDepthStencilView(depth_texture.Get(), nullptr, &depth_stencil);
+    if (FAILED(hr)) {
+      REXLOG_ERROR("SW2E native GPU live replay failed to create depth-stencil view: 0x{:08x}",
                    static_cast<uint32_t>(hr));
       return false;
     }

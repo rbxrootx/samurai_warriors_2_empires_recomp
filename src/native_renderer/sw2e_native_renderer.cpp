@@ -2051,6 +2051,7 @@ class Sidecar final : public EventSink {
     replay_draw.pixel_shader_hash = event.pixel_shader_hash;
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
+    replay_draw.normalized_depthcontrol = event.normalized_depthcontrol;
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     replay_draw.indices = std::move(indices);
     replay_draw.vertices.reserve(vertex_count);
@@ -2145,6 +2146,7 @@ class Sidecar final : public EventSink {
     replay_draw.pixel_shader_hash = event.pixel_shader_hash;
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
+    replay_draw.normalized_depthcontrol = event.normalized_depthcontrol;
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     replay_draw.pixel_mode = gpu_replay::ReplayPixelMode::kTextureColorLerpConstant;
     if (const auto* pixel_constant0 = FindNativeReplayPixelFloatConstant(event, 0)) {
@@ -2308,6 +2310,7 @@ class Sidecar final : public EventSink {
     replay_draw.pixel_shader_hash = event.pixel_shader_hash;
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = 0x00010001;
+    replay_draw.normalized_depthcontrol = event.normalized_depthcontrol;
     replay_draw.rt0_write_mask = 0x0F;
     replay_draw.indices = std::move(indices);
     replay_draw.vertices.reserve(vertex_count);
@@ -2492,6 +2495,7 @@ class Sidecar final : public EventSink {
     replay_draw.pixel_shader_hash = event.pixel_shader_hash;
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
+    replay_draw.normalized_depthcontrol = event.normalized_depthcontrol;
     replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     if (event.primitive_type == 8) {
       gpu_replay::ReplayVertex v0 = read_vertex(0, false);
@@ -2535,11 +2539,12 @@ class Sidecar final : public EventSink {
       REXLOG_INFO(
           "SW2E native GPU replay retained [{}] kind={} frame={} draw={} VS={:#018x} "
           "PS={:#018x} stride_words={} vertices={} indices={} texture_fmt={} tiled={} "
-          "texture={}x{} score={}",
+          "texture={}x{} depth=0x{:08x} score={}",
           i, NativeGpuReplayDrawKindName(draw.kind), draw.frame, draw.draw,
           draw.vertex_shader_hash, draw.pixel_shader_hash, draw.vertex_stride_words,
           draw.vertices.size(), draw.indices.size(), draw.texture.format, draw.texture.tiled,
-          draw.texture.width, draw.texture.height, NativeGpuReplayDrawScore(draw));
+          draw.texture.width, draw.texture.height, draw.normalized_depthcontrol,
+          NativeGpuReplayDrawScore(draw));
     }
     if (draws.size() > log_count) {
       REXLOG_INFO("SW2E native GPU replay retained {} additional draws", draws.size() - log_count);

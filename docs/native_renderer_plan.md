@@ -995,6 +995,18 @@ gameplay summary again reached `native_supported=740`, `native_tex=728`, `native
 compatibility backend still emits non-fatal resolve errors like `k_1_REVERSE` and an occasional
 surface-pitch resolve warning, so native render ownership is not complete yet.
 
+The D3D11 replay now carries captured `normalized_depthcontrol` per draw and owns a native
+`D24_UNORM_S8_UINT` depth target for both offscreen BMP replay and the live child swapchain. The
+depth-state cache maps Xenos depth enable/write/compare bits onto D3D11 compare/write state; stencil
+bits are detected and logged but intentionally ignored until the event stream captures stencil
+ref/mask registers. Validation `runtime.native-depth-replay-20260718-034526.log` rebuilt the
+standard 64-draw replay with the depth target active, exited `0`, and wrote
+`extracted\native_render_samples\native_depth_replay_20260718-034526.bmp`. A `24px` grid over that
+`1280x720` BMP again found `392/1620` nonblack samples with mean RGB-sum `114.29`, and retained
+draw logs showed captured depth states like `depth=0x00724f30` and `depth=0x00724f36`. Capped live
+validation `runtime.native-depth-live-present-20260718-034637.log` made two successful native child
+swapchain presents, exited `0`, and reported no native live-replay/depth creation failures.
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -1008,6 +1020,8 @@ work should proceed in this order:
 1. Replace the child-window live preview with ownership of the real game presenter/swap path for the
    title/menu pass once those families match the compatibility output.
 2. Handle the remaining depth/non-color title/menu output path under native render-target ownership.
+   Color replay now carries depth state, but no-color depth/stencil-only draws and stencil ref/mask
+   semantics still need targeted capture before they can participate in the ownership gate.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
    dumps. Compatible triangle strips and the D5 repeated terrain/ground strips can now be replayed;
    the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts, shader

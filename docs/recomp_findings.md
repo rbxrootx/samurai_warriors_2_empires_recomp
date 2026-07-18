@@ -576,6 +576,15 @@
   `native_solid=12`. Remaining backend messages include non-fatal `k_1_REVERSE` resolve errors and
   a surface-pitch resolve warning; those are compatibility-backend issues to eliminate as native
   ownership grows.
+- Native D3D11 replay now carries captured `normalized_depthcontrol` per draw and creates a
+  `D24_UNORM_S8_UINT` depth target for both offscreen BMP replay and the live child swapchain.
+  Xenos depth enable/write/compare bits map to D3D11 depth state; stencil bits are only logged until
+  stencil ref/mask registers are captured. Validation `runtime.native-depth-replay-20260718-034526.log`
+  exited `0`, wrote `extracted\native_render_samples\native_depth_replay_20260718-034526.bmp`,
+  and retained draws with depth states such as `0x00724f30` and `0x00724f36`. The `1280x720` BMP
+  remained nonblank (`392/1620` sampled grid points, mean RGB-sum `114.29`). Capped live validation
+  `runtime.native-depth-live-present-20260718-034637.log` made two successful native child
+  swapchain presents and exited `0` with no native live-replay/depth creation failures.
 
 ## Save And Storage Path
 

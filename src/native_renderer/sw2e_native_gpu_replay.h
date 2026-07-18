@@ -59,6 +59,7 @@ struct ReplayDraw {
   uint64_t pixel_shader_hash = 0;
   uint32_t vertex_stride_words = 0;
   uint32_t rt0_blendcontrol = 0x00010001;
+  uint32_t normalized_depthcontrol = 0;
   uint8_t rt0_write_mask = 0x0F;
   ReplayPixelMode pixel_mode = ReplayPixelMode::kTextureColor;
   std::array<float, 4> pixel_constant0 = {};
