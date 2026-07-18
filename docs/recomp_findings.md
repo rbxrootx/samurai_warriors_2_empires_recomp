@@ -778,6 +778,14 @@
   `LayoutGapCount=0`. The route is finite but offscreen (`inside=0.000`), and the replay BMP is
   black RGB/alpha-only, so further work should refine visible fit and shader-generated UV/color
   behavior rather than re-opening it as a layout blocker.
+- The `5A550226A224F581` route's offscreen projection was traced to the shader position swizzle, not
+  bad constants. The dumped ucode fetches the compact position as `r1.1zyx`, then skins `r1.xywz`;
+  decoding that as `{x=1, y=word2, z=word1, w=word0}` moved the same focused draw-25 probe into
+  visible clip. `runtime.native-transform-probe-20260718-080803.log` reports `inside=1.000` with
+  NDC around `x=0.0793..0.0855`, `y=-0.0037..0.0007`, `z=0.5441..0.5480`; the real-scale BMP is a
+  tiny sliver, while the fitted debug BMP from `runtime.native-transform-probe-20260718-081021.log`
+  has `33763` nonzero RGB pixels. This is transform input-order proof for the sampled route, not a
+  complete 5A material/branch implementation.
 - Projected transform reject logs now include compact vertex-fetch layout details (`vfetch_c`,
   stride, attribute signature, and the first four attributes) beside the rejection reason. The
   transform probe wrapper also skips malformed trailing `samples.jsonl` rows so a timed forced-close

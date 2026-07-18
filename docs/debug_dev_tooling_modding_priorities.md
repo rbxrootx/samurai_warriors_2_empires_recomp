@@ -135,7 +135,9 @@ scenario-specific stage metadata will surface.
 10. Native-render draw families: keep naming shader/draw-family evidence from bounded probes,
     especially the promoted D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD, B21C, 3094, 2E01,
     and 5A projection/effect paths plus remaining stride-8/9/10 layouts and tiled/render target
-    texture fetches. This supports native rendering and also helps correlate runtime meshes back to
+    texture fetches. For the 5A path, keep the `r1.1zyx` position swizzle named beside the draw
+    family because that swizzle was the difference between offscreen projection and `inside=1.000`
+    validation. This supports native rendering and also helps correlate runtime meshes back to
     archive `G1M_` data.
 
 ## Debug Tooling Survey Notes

@@ -862,10 +862,11 @@ bool DecodeNativeReplayTexturedVertex(const uint8_t* vertex, uint32_t vertex_str
   }
 
   if (IsNativeReplay5A550226LayoutVertexFetch(fetch) && vertex_stride_bytes >= 28) {
-    replay_vertex.x = ReadF32(vertex + 0, fetch.endian);
-    replay_vertex.y = ReadF32(vertex + 4, fetch.endian);
-    replay_vertex.z = ReadF32(vertex + 8, fetch.endian);
-    replay_vertex.w = 1.0f;
+    // The shader fetch writes the position as r1.1zyx, then uses r1.xywz for skinning.
+    replay_vertex.x = 1.0f;
+    replay_vertex.y = ReadF32(vertex + 8, fetch.endian);
+    replay_vertex.z = ReadF32(vertex + 4, fetch.endian);
+    replay_vertex.w = ReadF32(vertex + 0, fetch.endian);
     replay_vertex.u = 0.0f;
     replay_vertex.v = 0.0f;
     return true;

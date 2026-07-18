@@ -1303,6 +1303,18 @@ replay draws (`12 vertices, 18 indices`), wrote
 `LayoutGapCount=0`. The captured route is finite but fully outside the visible clip region
 (`inside=0.000`, NDC roughly `x=-3.79..-1.52`, `y=-12.16..-5.04`, `z=3.42..7.48`), so the BMP is
 black RGB with alpha only; this is a coverage/projection checkpoint, not a final visible render.
+The root cause was a decoder mismatch with the dumped ucode: `vfetch_mini r1.1zyx` writes
+`r1.x=1`, `r1.y=word2`, `r1.z=word1`, `r1.w=word0`, and the skinning path later consumes
+`r1.xywz`. After decoding that swizzle, focused no-JSON validation
+`runtime.native-transform-probe-20260718-080803.log` kept the same repeated draw-25 route finite
+and moved it into clip (`inside=1.000`, NDC about `x=0.0793..0.0855`,
+`y=-0.0037..0.0007`, `z=0.5441..0.5480`). The real-scale BMP
+`native_projected_gap_replay_20260718-080803.bmp` only has one nonzero RGB pixel because the sampled
+route is tiny at native scale, but debug-fit validation
+`runtime.native-transform-probe-20260718-081021.log` wrote
+`native_projected_gap_replay_20260718-081021.bmp` with `33763` nonzero RGB pixels. This validates
+the transform input order for the sampled route; richer 5A shader branches, UV/color, material, and
+full-scene composition still need separate coverage.
 The remaining shape gaps, transform families, and native render-target composition still block full
 native scene ownership.
 

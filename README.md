@@ -205,9 +205,11 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   projection shape as the 6B72 shader. UV/color handling is still conservative because the post-patch
   no-JSON repro runs missed the exact draw.
   The `5A550226A224F581 / 7703E4142DFBD4D4` indexed stride-7 attrs-1 family is also mapped as an
-  exact layout with `c4..c6` upstream rows and `c0..c3` projection rows. Focused validation queues it
-  and writes a replay BMP, but the sampled route is offscreen/black RGB, so this is a coverage
-  checkpoint rather than final visual fidelity.
+  exact layout with `c4..c6` upstream rows and `c0..c3` projection rows. The shader fetch writes the
+  compact position as `r1.1zyx` and later skins `r1.xywz`; decoding that swizzle moved the focused
+  draw-25 route from offscreen (`inside=0.000`) to visible clip (`inside=1.000`). Real-scale replay
+  is still only a tiny sliver, while debug-fit replay is nonblank, so this is transform correctness
+  progress rather than final material/texture/scene fidelity.
   A later broad no-JSON probe (`runtime.native-transform-probe-20260718-075605.log`) did not write a
   replay BMP, but it did capture the same stage streaming moment: `LINK_SEBANK` opens, archive
   entries `1584-1601`, repeated `G1M_`/`G1TG` reads, and projected draw-25+ gaps using the
@@ -225,9 +227,10 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Reproduce and visually validate the promoted `2E01/D104` path, then refine the promoted
-  `5A/7703` offscreen projection and continue through stride-7/8/9/10 vertex layouts, indexed
-  triangle strips, shader constants, and shader transforms.
+- Reproduce and visually validate the promoted `2E01/D104` path, then continue refining the
+  promoted `5A/7703` path beyond its corrected position swizzle through visible-scale fit,
+  shader-generated UV/color behavior, stride-7/8/9/10 vertex layouts, indexed triangle strips,
+  shader constants, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.
