@@ -7,6 +7,7 @@ useful for naming, cross-checking, and format sanity checks.
 
 | Tool/reference | Useful for | Notes |
 | --- | --- | --- |
+| [ReXGlue SDK docs](https://rexglue-rexglue-sdk.mintlify.app/introduction) and [SDK repo](https://github.com/rexglue/rexglue-sdk) | Runtime architecture, hooks, build expectations, and SDK/source patch context | ReXGlue is still early and generates native C++ from Xbox 360 XEX code, with runtime graphics/input/filesystem layers. Keep project-side native-render work isolated from generated code and expect SDK APIs to move. |
 | [Project-G1M](https://github.com/Joschuka/Project-G1M) | G1M/G1T/G1A/G2A reference behavior and Noesis-side validation | Native C++ Noesis plugin. Best treated as a reference for G1M/G1T layout and export behavior, not as the SW2E archive/modding foundation. |
 | [fmt_g1m](https://github.com/Joschuka/fmt_g1m) | Historical Python reference | Deprecated by its author in favor of Project-G1M, but still useful for comparing older parsing assumptions. |
 | [gust_tools](https://github.com/VitaSmith/gust_tools) and [gust_stuff](https://github.com/eArmada8/gust_stuff) | KT/Gust-family texture/container clues | Useful for G1T-style texture research, with game-specific differences expected. |
@@ -46,3 +47,6 @@ before reusing code, and keep SW2E-specific code in this repository independentl
    exact archive groups.
 5. Continue PIX/DbgPrint/source-path xref work, but treat it as renderer diagnostics unless a real
    gameplay-facing debug menu becomes reachable.
+6. Keep ReXGlue native-render work project-specific for now: SW2E can advance by mapping the small
+   number of shader/layout families it actually uses, then feed generalized fixes back into the SDK
+   only after the game-side behavior is proven.
