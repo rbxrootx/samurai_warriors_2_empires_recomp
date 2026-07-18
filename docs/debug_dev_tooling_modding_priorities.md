@@ -45,6 +45,7 @@ The real surviving dev-tool lead is the graphics diagnostic cluster:
 | `0x8236C020` | `sw2e_pix_diagnostic_callback_registration` | Registers the parser as diagnostic command `28` and the marker callback as id `47`. |
 | `0x8236BE60` | `sw2e_pix_performance_marker_callback` | Tracks PIX-style render event bits and timing counters. |
 | `0x8236B8B8` | `sw2e_pix_trace_capture_state_machine` | Reached from `PIX!Trace`, `PIX!Gpu`, `crashdump.pix2`, and capture begin/end strings. |
+| `0x823717B0`, `0x823727C0` | PIX capture-ended callbacks | Xrefs to `PIX!{CaptureEnded}` and `PIX!{CaptureFileCreationEnded}`; useful for naming the rest of the diagnostics flow. |
 | `0x8236D8F0` | `sw2e_guest_debug_print_formatter` | Formats a stack message with `__vsnprintf` and sends it to `DbgPrint`. |
 | `0x8236D978` | `sw2e_guest_debug_callback_logger` | Dispatches diagnostic text through a callback or falls back to `DbgPrint`. |
 | `0x8236DCE0`, `0x8236DF60`, `0x8236E780` | graphics/device diagnostic cluster | Probes config/device state and can report graphics init diagnostics. |
@@ -59,7 +60,8 @@ Stale but useful string leads:
 - `/_sm4emp/ViewerCharaXB2.g1s` and `/_sm4emp/ViewerCharaClothXB2.g1s`: possible viewer/model
   research strings, but no confirmed enabled viewer entry point yet.
 - Source-path anchors worth using for function names:
-  `Weapon.cpp`, `RelayCamera.cpp`, `emp_free_setup.cpp`, `StateEdit.cpp`, `StateStartUp.cpp`,
+  `Weapon.cpp`, `ModelManager.cpp`, `MotionManager.cpp`, `RelayCamera.cpp`, `Stage.cpp`,
+  `StgTexture.cpp`, `MiniMap.cpp`, `emp_free_setup.cpp`, `StateEdit.cpp`, `StateStartUp.cpp`,
   `JapanMap.cpp`, `sc_ctrl.cpp`, `emp_war_fix.cpp`, and `XBSaveLoad.cpp`.
 
 ## Format And Asset Leads
@@ -127,8 +129,8 @@ scenario-specific stage metadata will surface.
 8. Texture/material binding: name `G1M_` material texture-index consumers and the neighboring
    `G1TG` lookup path, because this directly improves Blender exports/imports.
 9. PIX/debug cluster: keep `0x8236BBF8`, `0x8236C020`, `0x8236BE60`, `0x8236B8B8`,
-   `0x8236D8F0`, and `0x8236D978` labeled, but treat them as render diagnostics unless a reachable
-   gameplay-facing caller appears.
+   `0x823717B0`, `0x823727C0`, `0x8236D8F0`, and `0x8236D978` labeled, but treat them as render
+   diagnostics unless a reachable gameplay-facing caller appears.
 10. Native-render draw families: keep naming shader/draw-family evidence from bounded probes,
     especially `ED8D12865D27DEBF`, `45C4DDDAAA10F75F`, stride-8/9/10 layouts, and tiled/render
     target texture fetches. This supports native rendering and also helps correlate runtime meshes
@@ -140,7 +142,8 @@ scenario-specific stage metadata will surface.
   targeted IDA xrefs.
 - Add bounded runtime logs around the stage-loader chain to print selected stage id, entry triplet,
   loaded pointer, subfile count, and LR.
-- Decode entry `68` fields first, then `1578/1579`, then `2944` stage metadata chunks.
+- For the Blender/map-editor path, decode runtime-confirmed stage metadata entry `2944` first. For
+  campaign/table editing, decode entry `68` next; for equipment editing, decode `1578/1579`.
 - Build a friendly mod manifest format that can say "replace stage 2856 sub_0001" or "replace
   weapon table 1579" and drive the existing repackers.
 - For Blender/map editing, prioritize material texture binding and unknown stage metadata before
