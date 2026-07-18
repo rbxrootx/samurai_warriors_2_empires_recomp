@@ -12,6 +12,7 @@ enum class ReplayDrawKind : uint32_t {
   kTexturedTriangles = 0,
   kSolidTriangles = 1,
   kProjectedTexturedTriangles = 2,
+  kDepthOnlyTriangles = 3,
 };
 
 enum class ReplayPixelMode : uint32_t {

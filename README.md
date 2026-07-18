@@ -43,6 +43,8 @@ References:
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
+- Native replay also carries depth state and can submit the first no-color depth rectangle family
+  into a native D3D11 depth target without letting depth-only passes own visible presentation.
 
 Full native gameplay rendering is not complete yet. The next big graphics milestone is correlating
 indexed `triangle_strip` battle draws and stride-8/9/10 vertex layouts with decoded G1M meshes,
@@ -168,6 +170,8 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   `c7..c10` `oPos` block for terrain/ground-strip diagnostics.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
+- Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
+  visible presentation ownership.
 - Keep the compatibility renderer as the reference path while native coverage grows.
 
 Near-term work:

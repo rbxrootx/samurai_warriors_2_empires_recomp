@@ -585,6 +585,19 @@
   remained nonblank (`392/1620` sampled grid points, mean RGB-sum `114.29`). Capped live validation
   `runtime.native-depth-live-present-20260718-034637.log` made two successful native child
   swapchain presents and exited `0` with no native live-replay/depth creation failures.
+- Native replay now treats the common no-color depth rectangle family as replayable
+  `supported_depth_only` work instead of an ownership blocker. The stable signature is
+  `VS=0x0a6d1dd7767fdf27`, `PS=0x2e372ea28cc404b7`, `primitive=8`, `index_count=3`,
+  `indexed=false`, `stride_words=7`, `normalized_depthcontrol=0x00008777`,
+  `pixel_needed=false`, `stencil=true`, `color_mask=0`, and no texture fetches. The D3D11 replay
+  submits it as `kind=depth_only`, disables the pixel shader, writes no RT0 color channels, and lets
+  the native depth target receive it. Validation `runtime.native-depthonly-guard-20260718-035920.log`
+  captured `frame 28 draw 48`, retained `kind=depth_only`, and kept the depth-only-only pass at
+  `owns_frame=false`. Live validation `runtime.native-depthonly-live-present-20260718-040253.log`
+  exited `0`, captured the same depth rectangle, made two normal native child presents, reported
+  zero `[error]` lines, zero assertions, and zero `owns_frame=true` lines, then wrote
+  `extracted\native_render_samples\native_depthonly_live_present_20260718-040253.bmp`; a sampled
+  `1280x720` grid found `2296/2304` nonblack points with mean RGB `147.91`.
 
 ## Save And Storage Path
 

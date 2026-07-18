@@ -1007,6 +1007,23 @@ draw logs showed captured depth states like `depth=0x00724f30` and `depth=0x0072
 validation `runtime.native-depth-live-present-20260718-034637.log` made two successful native child
 swapchain presents, exited `0`, and reported no native live-replay/depth creation failures.
 
+The no-color depth rectangle family is now a first-class native replay bucket:
+`supported_depth_only`. Its stable signature is `VS=0x0a6d1dd7767fdf27`,
+`PS=0x2e372ea28cc404b7`, `primitive=8`, `index_count=3`, `indexed=false`, `stride_words=7`,
+`normalized_depthcontrol=0x00008777`, `pixel_needed=false`, `stencil=true`, `color_mask=0`, and
+zero texture fetches. The capture path reuses the solid-rectangle vertex decode, but emits
+`ReplayDrawKind::kDepthOnlyTriangles`; the D3D11 replay binds no pixel shader and uses an RT0 write
+mask of zero, so only the native depth target is affected. The presenter/ownership guard now also
+requires at least one supported visible-color draw before a native pass can present or suppress the
+compatibility backend. That matters because validation
+`runtime.native-depthonly-guard-20260718-035920.log` captured `frame 28 draw 48` as
+`kind=depth_only` and correctly completed the depth-only-only pass with `owns_frame=false`.
+Follow-up live validation `runtime.native-depthonly-live-present-20260718-040253.log` exited `0`,
+captured the same depth rectangle, made two normal child-window D3D11 presents, reported zero
+assertions, zero `[error]` lines, and zero `owns_frame=true` lines, and wrote the nonblank
+`extracted\native_render_samples\native_depthonly_live_present_20260718-040253.bmp`
+(`1280x720`, sampled `2296/2304` nonblack points, mean RGB `147.91`).
+
 The child swapchain is temporary scaffolding, not the final renderer shape. The full-native target is
 to replay/classify enough of the Xbox draw stream that the project-side renderer can own render
 targets, frame pacing, final presentation, and native options like AA without depending on the
@@ -1019,9 +1036,9 @@ work should proceed in this order:
 
 1. Replace the child-window live preview with ownership of the real game presenter/swap path for the
    title/menu pass once those families match the compatibility output.
-2. Handle the remaining depth/non-color title/menu output path under native render-target ownership.
-   Color replay now carries depth state, but no-color depth/stencil-only draws and stencil ref/mask
-   semantics still need targeted capture before they can participate in the ownership gate.
+2. Extend depth/stencil ownership beyond the first no-color rectangle family. Depth-only rectangles
+   now replay into the native depth target, but real stencil ref/mask semantics and any additional
+   no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
    dumps. Compatible triangle strips and the D5 repeated terrain/ground strips can now be replayed;
    the remaining big gameplay gap is decoding the stride-8/9/10 model vertex layouts, shader

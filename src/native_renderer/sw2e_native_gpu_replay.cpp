@@ -923,6 +923,7 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
     ID3D11ShaderResourceView* texture_view = nullptr;
     const bool textured_draw = draw.kind == ReplayDrawKind::kTexturedTriangles ||
                                draw.kind == ReplayDrawKind::kProjectedTexturedTriangles;
+    const bool depth_only_draw = draw.kind == ReplayDrawKind::kDepthOnlyTriangles;
     if (textured_draw) {
       texture_view = pipeline.GetTextureView(device, draw);
       if (!texture_view) {
@@ -991,7 +992,7 @@ uint32_t DrawReplayDrawsD3D11(ID3D11Device* device, ID3D11DeviceContext* context
     } else {
       ID3D11ShaderResourceView* null_view = nullptr;
       ID3D11Buffer* null_constant_buffer = nullptr;
-      context->PSSetShader(pipeline.solid_pixel_shader.Get(), nullptr, 0);
+      context->PSSetShader(depth_only_draw ? nullptr : pipeline.solid_pixel_shader.Get(), nullptr, 0);
       context->PSSetConstantBuffers(1, 1, &null_constant_buffer);
       context->PSSetShaderResources(0, 1, &null_view);
     }

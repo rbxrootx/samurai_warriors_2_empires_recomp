@@ -181,6 +181,23 @@ struct TransformGapCounter {
   uint32_t draws = 0;
 };
 
+struct DepthOnlyCounter {
+  uint64_t vertex_hash = 0;
+  uint64_t pixel_hash = 0;
+  uint32_t primitive_type = 0;
+  uint32_t index_count = 0;
+  bool indexed = false;
+  uint32_t normalized_depthcontrol = 0;
+  uint32_t rb_depth_info = 0;
+  uint32_t normalized_color_mask = 0;
+  uint32_t pixel_color_target_mask = 0;
+  uint32_t vertex_fetch_count = 0;
+  uint32_t texture_fetch_count = 0;
+  bool pixel_shader_needed = false;
+  bool rasterization_potentially_done = false;
+  uint32_t draws = 0;
+};
+
 struct ProjectionCandidate {
   bool valid = false;
   bool column_major = false;
@@ -218,6 +235,7 @@ struct FrameStats {
   uint32_t native_replay_supported_draws = 0;
   uint32_t native_replay_supported_textured_draws = 0;
   uint32_t native_replay_supported_solid_draws = 0;
+  uint32_t native_replay_supported_depth_only_draws = 0;
   uint32_t native_replay_supported_indexed_draws = 0;
   uint32_t native_replay_depth_only_draws = 0;
   uint32_t native_replay_unsupported_indexed_draws = 0;
@@ -245,8 +263,10 @@ struct FrameStats {
   std::array<ShaderPairCounter, 16> shader_pairs = {};
   std::array<TransformGapCounter, 8> transform_gaps = {};
   std::array<TransformGapCounter, 8> layout_gaps = {};
+  std::array<DepthOnlyCounter, 8> depth_only = {};
   uint32_t other_transform_gap_draws = 0;
   uint32_t other_layout_gap_draws = 0;
+  uint32_t other_depth_only_draws = 0;
 };
 
 void ResetFrame(FrameStats& stats, uint32_t frame_index) {
@@ -263,6 +283,22 @@ bool IsNativeNoOutputSkipCandidate(const DrawEvent& event) {
 
 bool HasNativeReplayColorOutput(const DrawEvent& event) {
   return event.output_merger_writes && ((event.normalized_color_mask & 0x0F) != 0);
+}
+
+bool NativeDepthControlStencilEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x1) != 0;
+}
+
+bool NativeDepthControlZEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x2) != 0;
+}
+
+bool NativeDepthControlZWriteEnable(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol & 0x4) != 0;
+}
+
+uint32_t NativeDepthControlZFunc(uint32_t normalized_depthcontrol) {
+  return (normalized_depthcontrol >> 4) & 0x7;
 }
 
 constexpr uint32_t kGuestPhysicalMemoryBytes = 0x20000000;
@@ -1457,6 +1493,8 @@ const char* NativeGpuReplayDrawKindName(gpu_replay::ReplayDrawKind kind) {
       return "solid";
     case gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles:
       return "projected";
+    case gpu_replay::ReplayDrawKind::kDepthOnlyTriangles:
+      return "depth_only";
   }
   return "unknown";
 }
@@ -1465,7 +1503,9 @@ uint32_t NativeGpuReplayDrawScore(const gpu_replay::ReplayDraw& draw) {
   const uint32_t kind_score =
       draw.kind == gpu_replay::ReplayDrawKind::kProjectedTexturedTriangles
           ? 100000u
-          : (draw.kind == gpu_replay::ReplayDrawKind::kTexturedTriangles ? 1000u : 0u);
+          : (draw.kind == gpu_replay::ReplayDrawKind::kTexturedTriangles
+                 ? 1000u
+                 : (draw.kind == gpu_replay::ReplayDrawKind::kDepthOnlyTriangles ? 10u : 0u));
   const uint32_t vertex_score =
       std::min<uint32_t>(static_cast<uint32_t>(draw.vertices.size()), 100000u);
   const uint32_t index_score =
@@ -1479,6 +1519,15 @@ uint32_t NativeGpuReplayPassScore(const std::vector<gpu_replay::ReplayDraw>& dra
     score = std::min<uint32_t>(score + NativeGpuReplayDrawScore(draw), UINT32_MAX - 1);
   }
   return score;
+}
+
+bool NativeGpuReplayDrawHasColorOutput(const gpu_replay::ReplayDraw& draw) {
+  return draw.kind != gpu_replay::ReplayDrawKind::kDepthOnlyTriangles &&
+         (draw.rt0_write_mask & 0x0F) != 0;
+}
+
+bool NativeGpuReplayPassHasColorOutput(const std::vector<gpu_replay::ReplayDraw>& draws) {
+  return std::any_of(draws.begin(), draws.end(), NativeGpuReplayDrawHasColorOutput);
 }
 
 std::optional<uint64_t> ParseNativeGpuReplayHashFilter(std::string_view text) {
@@ -1625,6 +1674,7 @@ enum class NativeReplaySupport {
   kSupportedTextured,
   kSupportedIndexedTextured,
   kSupportedSolid,
+  kSupportedDepthOnly,
   kDepthOnly,
   kUnsupportedIndexed,
   kUnsupportedShape,
@@ -1643,6 +1693,8 @@ const char* NativeReplaySupportName(NativeReplaySupport support) {
       return "supported_indexed_textured";
     case NativeReplaySupport::kSupportedSolid:
       return "supported_solid";
+    case NativeReplaySupport::kSupportedDepthOnly:
+      return "supported_depth_only";
     case NativeReplaySupport::kDepthOnly:
       return "depth_only";
     case NativeReplaySupport::kUnsupportedIndexed:
@@ -1665,11 +1717,27 @@ bool IsNativeReplayGapSupport(NativeReplaySupport support) {
          support == NativeReplaySupport::kUnsupportedTransform;
 }
 
+bool IsNativeReplaySolidShape(const DrawEvent& event) {
+  return (event.primitive_type == 8 && event.index_count == 3) ||
+         (event.primitive_type == 6 && event.index_count == 4);
+}
+
+bool CanReplayNativeDepthOnlyDraw(const DrawEvent& event) {
+  return event.output_merger_writes && !HasNativeReplayColorOutput(event) &&
+         event.vertex_memexport_mask == 0 && event.pixel_memexport_mask == 0 &&
+         !HasVizQuerySideEffect(event) && !event.indexed && IsNativeReplaySolidShape(event) &&
+         event.texture_fetch_summary_count == 0 && event.vertex_fetch_summary_count != 0 &&
+         FindNativeReplaySolidVertexFetch(event);
+}
+
 NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
   if (IsNativeNoOutputSkipCandidate(event)) {
     return NativeReplaySupport::kNoOutputSkipCandidate;
   }
   if (!HasNativeReplayColorOutput(event)) {
+    if (CanReplayNativeDepthOnlyDraw(event)) {
+      return NativeReplaySupport::kSupportedDepthOnly;
+    }
     return NativeReplaySupport::kDepthOnly;
   }
   if (IsNativeReplayTexturedTriangleShape(event)) {
@@ -1698,10 +1766,8 @@ NativeReplaySupport ClassifyNativeReplaySupport(const DrawEvent& event) {
     return NativeReplaySupport::kUnsupportedIndexed;
   }
 
-  const bool solid_shape =
-      (event.primitive_type == 8 && event.index_count == 3) ||
-      (event.primitive_type == 6 && event.index_count == 4);
-  if (solid_shape && event.texture_fetch_summary_count == 0 && event.vertex_fetch_summary_count != 0) {
+  if (IsNativeReplaySolidShape(event) && event.texture_fetch_summary_count == 0 &&
+      event.vertex_fetch_summary_count != 0) {
     if (!FindNativeReplaySolidVertexFetch(event)) {
       return NativeReplaySupport::kUnsupportedLayout;
     }
@@ -1836,8 +1902,15 @@ class Sidecar final : public EventSink {
         ++stats_.native_replay_supported_draws;
         ++stats_.native_replay_supported_solid_draws;
         break;
+      case NativeReplaySupport::kSupportedDepthOnly:
+        ++stats_.native_replay_supported_draws;
+        ++stats_.native_replay_supported_depth_only_draws;
+        ++stats_.native_replay_depth_only_draws;
+        CountDepthOnly(event);
+        break;
       case NativeReplaySupport::kDepthOnly:
         ++stats_.native_replay_depth_only_draws;
+        CountDepthOnly(event);
         break;
       case NativeReplaySupport::kUnsupportedIndexed:
         ++stats_.native_replay_unsupported_indexed_draws;
@@ -1931,6 +2004,9 @@ class Sidecar final : public EventSink {
       captured = CaptureNativeGpuReplayTexturedDraw(event, context);
       if (!captured) {
         captured = CaptureNativeGpuReplayConstantScreenQuadDraw(event, context);
+      }
+      if (!captured) {
+        captured = CaptureNativeGpuReplayDepthOnlyDraw(event, context);
       }
       if (!captured && REXCVAR_GET(sw2e_native_renderer_gpu_replay_include_solid_geometry)) {
         captured = CaptureNativeGpuReplaySolidDraw(event, context);
@@ -2430,16 +2506,29 @@ class Sidecar final : public EventSink {
     return false;
   }
 
+  bool CaptureNativeGpuReplayDepthOnlyDraw(const DrawEvent& event,
+                                           const DrawEventContext& context) {
+    return CaptureNativeGpuReplaySolidLikeDraw(event, context, true);
+  }
+
   bool CaptureNativeGpuReplaySolidDraw(const DrawEvent& event, const DrawEventContext& context) {
-    if (!HasNativeReplayColorOutput(event)) {
+    return CaptureNativeGpuReplaySolidLikeDraw(event, context, false);
+  }
+
+  bool CaptureNativeGpuReplaySolidLikeDraw(const DrawEvent& event,
+                                           const DrawEventContext& context, bool depth_only) {
+    if (depth_only) {
+      if (!CanReplayNativeDepthOnlyDraw(event)) {
+        return false;
+      }
+    } else if (!HasNativeReplayColorOutput(event)) {
       return false;
     }
     if (event.indexed || event.vertex_fetch_summary_count == 0 ||
         event.texture_fetch_summary_count != 0) {
       return false;
     }
-    if (!((event.primitive_type == 8 && event.index_count == 3) ||
-          (event.primitive_type == 6 && event.index_count == 4))) {
+    if (!IsNativeReplaySolidShape(event)) {
       return false;
     }
 
@@ -2462,7 +2551,9 @@ class Sidecar final : public EventSink {
       return false;
     }
 
-    const std::array<float, 4> solid_color = NativeGpuReplaySolidColor(event);
+    const std::array<float, 4> solid_color =
+        depth_only ? std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}
+                   : NativeGpuReplaySolidColor(event);
     auto read_vertex = [&](uint32_t index, bool clip_space) {
       const uint8_t* vertex = vertex_bytes.data() + size_t(index) * vertex_stride_bytes;
       gpu_replay::ReplayVertex replay_vertex;
@@ -2488,7 +2579,8 @@ class Sidecar final : public EventSink {
     };
 
     gpu_replay::ReplayDraw replay_draw;
-    replay_draw.kind = gpu_replay::ReplayDrawKind::kSolidTriangles;
+    replay_draw.kind = depth_only ? gpu_replay::ReplayDrawKind::kDepthOnlyTriangles
+                                  : gpu_replay::ReplayDrawKind::kSolidTriangles;
     replay_draw.frame = event.frame_index;
     replay_draw.draw = event.draw_index;
     replay_draw.vertex_shader_hash = event.vertex_shader_hash;
@@ -2496,7 +2588,8 @@ class Sidecar final : public EventSink {
     replay_draw.vertex_stride_words = vertex_fetch->stride_words;
     replay_draw.rt0_blendcontrol = event.rt_blendcontrol[0];
     replay_draw.normalized_depthcontrol = event.normalized_depthcontrol;
-    replay_draw.rt0_write_mask = static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
+    replay_draw.rt0_write_mask =
+        depth_only ? 0 : static_cast<uint8_t>(event.normalized_color_mask & 0x0F);
     if (event.primitive_type == 8) {
       gpu_replay::ReplayVertex v0 = read_vertex(0, false);
       gpu_replay::ReplayVertex v1 = read_vertex(1, false);
@@ -2512,7 +2605,10 @@ class Sidecar final : public EventSink {
       replay_draw.vertices = {v0, v1, v2, v2, v1, v3};
     }
 
-    QueueNativeGpuReplayDraw(std::move(replay_draw), event.primitive_type == 8 ? "rectangle" : "strip");
+    QueueNativeGpuReplayDraw(
+        std::move(replay_draw),
+        depth_only ? (event.primitive_type == 8 ? "depth rectangle" : "depth strip")
+                   : (event.primitive_type == 8 ? "rectangle" : "strip"));
     return true;
   }
 
@@ -2573,9 +2669,10 @@ class Sidecar final : public EventSink {
     const size_t completed_draw_count = native_gpu_replay_draws_.size();
     const gpu_replay::ReplayDraw& first_draw = native_gpu_replay_draws_.front();
     const gpu_replay::ReplayDraw& last_draw = native_gpu_replay_draws_.back();
+    const bool has_color_output = NativeGpuReplayPassHasColorOutput(native_gpu_replay_draws_);
     const bool owns_current_frame = NativeGpuReplayOwnsCurrentFrame(completed_draw_count);
     bool presented = false;
-    if (REXCVAR_GET(sw2e_native_renderer_gpu_replay_live_present)) {
+    if (has_color_output && REXCVAR_GET(sw2e_native_renderer_gpu_replay_live_present)) {
       const int32_t present_limit = REXCVAR_GET(sw2e_native_renderer_gpu_replay_live_present_limit);
       if (present_limit <= 0 ||
           native_gpu_replay_live_present_count_ < static_cast<uint32_t>(present_limit)) {
@@ -2619,7 +2716,8 @@ class Sidecar final : public EventSink {
   bool NativeGpuReplayOwnsCurrentFrame(size_t completed_draw_count) const {
     return completed_draw_count == stats_.native_replay_supported_draws &&
            stats_.native_replay_supported_draws != 0 &&
-           stats_.native_replay_depth_only_draws == 0 &&
+           stats_.native_replay_supported_draws >
+               stats_.native_replay_supported_depth_only_draws &&
            stats_.native_replay_unsupported_indexed_draws == 0 &&
            stats_.native_replay_unsupported_shape_draws == 0 &&
            stats_.native_replay_unsupported_layout_draws == 0 &&
@@ -2647,6 +2745,50 @@ class Sidecar final : public EventSink {
     }
 
     ++stats_.other_shader_pair_draws;
+  }
+
+  void CountDepthOnly(const DrawEvent& event) {
+    DepthOnlyCounter* empty_slot = nullptr;
+    for (auto& depth_only : stats_.depth_only) {
+      if (depth_only.draws != 0 && depth_only.vertex_hash == event.vertex_shader_hash &&
+          depth_only.pixel_hash == event.pixel_shader_hash &&
+          depth_only.primitive_type == event.primitive_type &&
+          depth_only.index_count == event.index_count && depth_only.indexed == event.indexed &&
+          depth_only.normalized_depthcontrol == event.normalized_depthcontrol &&
+          depth_only.rb_depth_info == event.rb_depth_info &&
+          depth_only.normalized_color_mask == event.normalized_color_mask &&
+          depth_only.pixel_color_target_mask == event.pixel_color_target_mask &&
+          depth_only.vertex_fetch_count == event.vertex_fetch_summary_count &&
+          depth_only.texture_fetch_count == event.texture_fetch_summary_count &&
+          depth_only.pixel_shader_needed == event.pixel_shader_needed_with_rasterization &&
+          depth_only.rasterization_potentially_done == event.rasterization_potentially_done) {
+        ++depth_only.draws;
+        return;
+      }
+      if (depth_only.draws == 0 && !empty_slot) {
+        empty_slot = &depth_only;
+      }
+    }
+
+    if (empty_slot) {
+      empty_slot->vertex_hash = event.vertex_shader_hash;
+      empty_slot->pixel_hash = event.pixel_shader_hash;
+      empty_slot->primitive_type = event.primitive_type;
+      empty_slot->index_count = event.index_count;
+      empty_slot->indexed = event.indexed;
+      empty_slot->normalized_depthcontrol = event.normalized_depthcontrol;
+      empty_slot->rb_depth_info = event.rb_depth_info;
+      empty_slot->normalized_color_mask = event.normalized_color_mask;
+      empty_slot->pixel_color_target_mask = event.pixel_color_target_mask;
+      empty_slot->vertex_fetch_count = event.vertex_fetch_summary_count;
+      empty_slot->texture_fetch_count = event.texture_fetch_summary_count;
+      empty_slot->pixel_shader_needed = event.pixel_shader_needed_with_rasterization;
+      empty_slot->rasterization_potentially_done = event.rasterization_potentially_done;
+      empty_slot->draws = 1;
+      return;
+    }
+
+    ++stats_.other_depth_only_draws;
   }
 
   void CountTransformGap(const DrawEvent& event) {
@@ -3116,6 +3258,19 @@ class Sidecar final : public EventSink {
     return top;
   }
 
+  const DepthOnlyCounter* TopDepthOnly() const {
+    const DepthOnlyCounter* top = nullptr;
+    for (const auto& depth_only : stats_.depth_only) {
+      if (depth_only.draws == 0) {
+        continue;
+      }
+      if (!top || depth_only.draws > top->draws) {
+        top = &depth_only;
+      }
+    }
+    return top;
+  }
+
   void LogReplayGap(const SwapEvent& event, const TransformGapCounter* gap, const char* kind,
                     uint32_t other_draws) const {
     if (!gap) {
@@ -3149,6 +3304,28 @@ class Sidecar final : public EventSink {
         gap->first_texture_format, gap->first_texture_dimension, gap->first_texture_tiled);
   }
 
+  void LogTopDepthOnly(const SwapEvent& event) const {
+    const DepthOnlyCounter* top = TopDepthOnly();
+    if (!top) {
+      return;
+    }
+
+    REXLOG_INFO(
+        "SW2E native depth-only frame {}: draws={} other={} prim={} indices={} indexed={} "
+        "depth=0x{:08x} z_enable={} z_write={} z_func={} stencil={} rb_depth=0x{:08x} "
+        "color_mask=0x{:08x} pixel_targets=0x{:08x} raster={} pixel_needed={} "
+        "vfetches={} tfetches={} VS={:#018x} PS={:#018x}",
+        event.frame_index, top->draws, stats_.other_depth_only_draws, top->primitive_type,
+        top->index_count, top->indexed, top->normalized_depthcontrol,
+        NativeDepthControlZEnable(top->normalized_depthcontrol),
+        NativeDepthControlZWriteEnable(top->normalized_depthcontrol),
+        NativeDepthControlZFunc(top->normalized_depthcontrol),
+        NativeDepthControlStencilEnable(top->normalized_depthcontrol), top->rb_depth_info,
+        top->normalized_color_mask, top->pixel_color_target_mask,
+        top->rasterization_potentially_done, top->pixel_shader_needed,
+        top->vertex_fetch_count, top->texture_fetch_count, top->vertex_hash, top->pixel_hash);
+  }
+
   void LogTopTransformGap(const SwapEvent& event) const {
     LogReplayGap(event, TopGap(stats_.transform_gaps), "transform", stats_.other_transform_gap_draws);
   }
@@ -3168,7 +3345,8 @@ class Sidecar final : public EventSink {
           "vfetch_draws={} "
           "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
           "noout_skip={} noout_point={} raster_noout={} viz_query={} "
-          "native_supported={} native_tex={} native_solid={} native_indexed={} depth_only={} "
+          "native_supported={} native_tex={} native_solid={} native_depth={} native_indexed={} "
+          "depth_only={} "
           "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
           "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
           "frontbuffer={:#010x} {}x{} "
@@ -3184,6 +3362,7 @@ class Sidecar final : public EventSink {
           stats_.viz_query_draws, stats_.native_replay_supported_draws,
           stats_.native_replay_supported_textured_draws,
           stats_.native_replay_supported_solid_draws,
+          stats_.native_replay_supported_depth_only_draws,
           stats_.native_replay_supported_indexed_draws, stats_.native_replay_depth_only_draws,
           stats_.native_replay_unsupported_indexed_draws,
           stats_.native_replay_unsupported_shape_draws,
@@ -3198,6 +3377,7 @@ class Sidecar final : public EventSink {
           top->vertex_hash, top->pixel_hash, top->draws, stats_.other_shader_pair_draws);
       LogTopTransformGap(event);
       LogTopLayoutGap(event);
+      LogTopDepthOnly(event);
       return;
     }
 
@@ -3206,7 +3386,8 @@ class Sidecar final : public EventSink {
         "vfetch_draws={} "
         "tfetch_draws={} vfetches={} tfetches={} memexport={} om_writes={} "
         "noout_skip={} noout_point={} raster_noout={} viz_query={} "
-        "native_supported={} native_tex={} native_solid={} native_indexed={} depth_only={} "
+        "native_supported={} native_tex={} native_solid={} native_depth={} native_indexed={} "
+        "depth_only={} "
         "unsupported_output(indexed/shape/layout/texture/transform)={}/{}/{}/{}/{} "
         "vertex_range={:#010x}-{:#010x} index_range={:#010x}-{:#010x} "
         "frontbuffer={:#010x} {}x{} "
@@ -3219,8 +3400,9 @@ class Sidecar final : public EventSink {
         stats_.no_output_skip_candidate_draws, stats_.no_output_point_list_draws,
         stats_.rasterized_no_output_draws, stats_.viz_query_draws,
         stats_.native_replay_supported_draws, stats_.native_replay_supported_textured_draws,
-        stats_.native_replay_supported_solid_draws, stats_.native_replay_supported_indexed_draws,
-        stats_.native_replay_depth_only_draws,
+        stats_.native_replay_supported_solid_draws,
+        stats_.native_replay_supported_depth_only_draws,
+        stats_.native_replay_supported_indexed_draws, stats_.native_replay_depth_only_draws,
         stats_.native_replay_unsupported_indexed_draws,
         stats_.native_replay_unsupported_shape_draws,
         stats_.native_replay_unsupported_layout_draws,
@@ -3233,6 +3415,7 @@ class Sidecar final : public EventSink {
         stats_.texture_sample_bytes, stats_.index_sample_bytes);
     LogTopTransformGap(event);
     LogTopLayoutGap(event);
+    LogTopDepthOnly(event);
   }
 
   uint32_t swap_count_ = 0;
