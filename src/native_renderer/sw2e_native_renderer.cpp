@@ -211,6 +211,7 @@ struct ProjectionCandidate {
   bool use_6e10_model_skin = false;
   bool use_83bd_model_skin = false;
   bool use_b21c_model_skin = false;
+  bool use_3094_effect_quad = false;
   uint32_t shared_shader_constant_base = 4;
   const char* source = "none";
   float finite_ratio = 0.0f;
@@ -727,6 +728,28 @@ bool IsNativeReplayB21CModelVertexFetch(const VertexFetchSummary& fetch) {
          texcoord_attribute.result_storage_target == 1 &&
          texcoord_attribute.result_storage_index == 0 &&
          texcoord_attribute.result_swizzle == 548;
+}
+
+bool IsNativeReplay3094EffectVertexFetch(const VertexFetchSummary& fetch) {
+  const uint32_t attribute_count =
+      std::min(fetch.attribute_summary_count,
+               rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+  if (fetch.stride_words != 8 || attribute_count != 2) {
+    return false;
+  }
+
+  const VertexAttributeSummary& position_attribute = fetch.attributes[0];
+  const VertexAttributeSummary& texcoord_attribute = fetch.attributes[1];
+  return position_attribute.data_format == kXenosVertexFormat32_32_32_32Float &&
+         position_attribute.offset_words == 0 &&
+         position_attribute.result_storage_target == 1 &&
+         position_attribute.result_storage_index == 1 &&
+         position_attribute.result_swizzle == 1672 &&
+         texcoord_attribute.data_format == kXenosVertexFormat32_32Float &&
+         texcoord_attribute.offset_words == 4 &&
+         texcoord_attribute.result_storage_target == 1 &&
+         texcoord_attribute.result_storage_index == 0 &&
+         texcoord_attribute.result_swizzle == 2312;
 }
 
 bool CanDecodeNativeReplayTexturedVertexFetch(const VertexFetchSummary& fetch) {
@@ -1295,8 +1318,41 @@ std::optional<std::array<float, 4>> EvaluateNativeReplay83BDModelClip(
   return clip;
 }
 
+std::optional<std::array<float, 4>> EvaluateNativeReplay3094EffectQuadClip(
+    const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (!projection.shared_shader_constant_present[0] ||
+      !projection.shared_shader_constant_present[255]) {
+    return std::nullopt;
+  }
+
+  const auto& c0 = projection.shared_shader_constants[0];
+  const auto& c255 = projection.shared_shader_constants[255];
+  std::array<float, 4> clip = {
+      2.0f * (vertex.x + c0[0]) + c255[0],
+      -2.0f * (vertex.y + c0[1]) + c255[1],
+      vertex.z,
+      vertex.w,
+  };
+  for (float value : clip) {
+    if (!std::isfinite(value)) {
+      return std::nullopt;
+    }
+  }
+  return clip;
+}
+
 std::array<float, 4> TransformNativeReplayPositionWithCandidate(
     const gpu_replay::ReplayVertex& vertex, const ProjectionCandidate& projection) {
+  if (projection.use_3094_effect_quad) {
+    const std::optional<std::array<float, 4>> clip =
+        EvaluateNativeReplay3094EffectQuadClip(vertex, projection);
+    if (!clip) {
+      const float nan = std::numeric_limits<float>::quiet_NaN();
+      return {nan, nan, nan, nan};
+    }
+    return *clip;
+  }
+
   if (projection.use_1b2e_character_skin) {
     const std::optional<std::array<float, 4>> clip =
         EvaluateNativeReplay1B2ECharacterClip(vertex, projection);
@@ -1594,9 +1650,18 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   bool use_6e10_model_skin = false;
   bool use_83bd_model_skin = false;
   bool use_b21c_model_skin = false;
+  bool use_3094_effect_quad = false;
+  bool copy_shader_constants = false;
   uint32_t shared_shader_constant_base = 4;
   const char* source = nullptr;
   switch (event.vertex_shader_hash) {
+    case 0x3094A52CE2571823ull:
+      constants = {0, 0, 255, 255};
+      direct_projection_rows = true;
+      use_3094_effect_quad = true;
+      copy_shader_constants = true;
+      source = "shader-effect-quad-c0-c255";
+      break;
     case 0xED8D12865D27DEBFull:
     case 0x45C4DDDAAA10F75Full:
     case 0x1C9E2812AEBDBE4Eull:
@@ -1691,13 +1756,15 @@ ProjectionCandidate FindNativeReplayShaderFinalProjectionCandidate(
   candidate.use_6e10_model_skin = include_shared_shader_skin && use_6e10_model_skin;
   candidate.use_83bd_model_skin = include_shared_shader_skin && use_83bd_model_skin;
   candidate.use_b21c_model_skin = include_shared_shader_skin && use_b21c_model_skin;
+  candidate.use_3094_effect_quad = use_3094_effect_quad;
   if (include_bone0_upstream &&
       !BuildNativeReplayBone0UpstreamRows(event, candidate.upstream_constant_indices,
                                           candidate.upstream_rows)) {
     return {};
   }
   candidate.has_upstream_transform = include_bone0_upstream;
-  if (include_shared_shader_skin && !CopyNativeReplaySharedShaderConstants(event, candidate)) {
+  if ((include_shared_shader_skin || copy_shader_constants) &&
+      !CopyNativeReplaySharedShaderConstants(event, candidate)) {
     return {};
   }
   candidate.use_shared_shader_skin = include_shared_shader_skin;
@@ -2518,6 +2585,10 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.vertex_shader_hash == 0xB21C8D7A8DB9B17Aull &&
       event.pixel_shader_hash == 0x270B573E744D1ACBull && event.indexed &&
       event.primitive_type == kXenosPrimitiveTriangleStrip;
+  const bool effect_quad_3094_projected =
+      event.vertex_shader_hash == 0x3094A52CE2571823ull &&
+      event.pixel_shader_hash == 0x969CA710A35A4251ull && !event.indexed &&
+      event.primitive_type == kXenosPrimitiveTriangleStrip && event.index_count == 4;
   const bool character_stride11_projected =
       event.vertex_shader_hash == 0x1B2E9C6960B0C86Eull &&
       event.pixel_shader_hash == 0xD10452A3E31F9C61ull && event.indexed &&
@@ -2536,7 +2607,7 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
       event.primitive_type == kXenosPrimitiveTriangleStrip;
   if ((!d5_projected && !indexed_stride11_projected && !ed8d_stride12_projected &&
        !model_stride10_projected && !weighted_model_stride12_projected &&
-       !b21c_stride10_projected &&
+       !b21c_stride10_projected && !effect_quad_3094_projected &&
        !character_stride11_projected &&
        !a395_stride10_projected && !indexed_stride9_projected && !model_stride9_projected) ||
       !HasNativeReplayColorOutput(event) ||
@@ -2563,6 +2634,9 @@ bool CanReplayNativeSupportedProjectedTransformDraw(const DrawEvent& event) {
     return false;
   }
   if (b21c_stride10_projected && !IsNativeReplayB21CModelVertexFetch(*vertex_fetch)) {
+    return false;
+  }
+  if (effect_quad_3094_projected && !IsNativeReplay3094EffectVertexFetch(*vertex_fetch)) {
     return false;
   }
   if (a395_stride10_projected && vertex_fetch->stride_words != 10) {
@@ -3365,6 +3439,40 @@ class Sidecar final : public EventSink {
                                                   NativeReplaySupport replay_support) {
     if (native_gpu_replay_projected_reject_log_count_ <
         kNativeGpuReplayProjectedRejectLogLimit) {
+      char vertex_summary[512] = "none";
+      const VertexFetchSummary* reject_fetch = FindDecodableNativeReplayTexturedVertexFetch(event);
+      if (!reject_fetch) {
+        reject_fetch = FirstUsefulVertexFetch(event);
+      }
+      if (reject_fetch) {
+        const uint32_t attribute_count =
+            std::min(reject_fetch->attribute_summary_count,
+                     rex::graphics::native_render::kMaxVertexAttributeSummariesPerFetch);
+        const auto attribute_at = [&](uint32_t index) -> VertexAttributeSummary {
+          return index < attribute_count ? reject_fetch->attributes[index] : VertexAttributeSummary{};
+        };
+        const VertexAttributeSummary a0 = attribute_at(0);
+        const VertexAttributeSummary a1 = attribute_at(1);
+        const VertexAttributeSummary a2 = attribute_at(2);
+        const VertexAttributeSummary a3 = attribute_at(3);
+        std::snprintf(
+            vertex_summary, sizeof(vertex_summary),
+            "vfetch_c=%u stride_words=%u attrs=%u attr_sig=%#llx "
+            "a0=fmt%u@w%d->t%ui%um%uu%us%u a1=fmt%u@w%d->t%ui%um%uu%us%u "
+            "a2=fmt%u@w%d->t%ui%um%uu%us%u a3=fmt%u@w%d->t%ui%um%uu%us%u",
+            reject_fetch->fetch_constant, reject_fetch->stride_words,
+            reject_fetch->attribute_count,
+            static_cast<unsigned long long>(TransformGapAttributeSignature(*reject_fetch)),
+            a0.data_format, a0.offset_words, a0.result_storage_target,
+            a0.result_storage_index, a0.result_write_mask, a0.result_used_components,
+            a0.result_swizzle, a1.data_format, a1.offset_words, a1.result_storage_target,
+            a1.result_storage_index, a1.result_write_mask, a1.result_used_components,
+            a1.result_swizzle, a2.data_format, a2.offset_words, a2.result_storage_target,
+            a2.result_storage_index, a2.result_write_mask, a2.result_used_components,
+            a2.result_swizzle, a3.data_format, a3.offset_words, a3.result_storage_target,
+            a3.result_storage_index, a3.result_write_mask, a3.result_used_components,
+            a3.result_swizzle);
+      }
       char texture_summary[256] = "none";
       if (event.texture_fetch_summary_count != 0) {
         const auto& tex0 = event.texture_fetches[0];
@@ -3384,10 +3492,10 @@ class Sidecar final : public EventSink {
       }
       REXLOG_INFO(
           "SW2E projected transform gap rejected frame {} draw {}: {} support={} prim={} "
-          "indexed={} index_count={} vfetches={} tfetches={} textures={}",
+          "indexed={} index_count={} vfetches={} tfetches={} vertex={} textures={}",
           event.frame_index, event.draw_index, reason, NativeReplaySupportName(replay_support),
           event.primitive_type, event.indexed, event.index_count, event.vertex_fetch_summary_count,
-          event.texture_fetch_summary_count, texture_summary);
+          event.texture_fetch_summary_count, vertex_summary, texture_summary);
     } else if (native_gpu_replay_projected_reject_log_count_ ==
                kNativeGpuReplayProjectedRejectLogLimit) {
       REXLOG_INFO("SW2E projected transform gap suppressing further rejection logs");

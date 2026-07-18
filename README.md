@@ -45,7 +45,8 @@ References:
   the 6B72 indexed stride-9 model/weapon strip family, the ED8D indexed stride-12 shared-skin
   cloth/banner family, the 6E10 indexed stride-10 stage/building model family, the 83BD indexed
   stride-12 weighted officer/character family, and the B21C indexed stride-10 single-palette
-  strip/effect family.
+  strip/effect family. The 3094 non-indexed stride-8 post/effect quad family is now mapped behind
+  an exact layout gate and direct `c0/c255` clip transform.
 - Standard native replay now also supports the DE7 constant-selector screen-space quad family that
   covers a large gameplay UI/effect bucket. This is visibility scaffolding for native gameplay
   rendering, not the final camera/shader path.
@@ -193,7 +194,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
   weight, `0x00FF` strip separators, `c15..c17` weighted skin rows, and `c11..c14` projection block.
   The `B21C8D7A8DB9B17A / 270B573E744D1ACB` stride-10 attrs-5 family is promoted through its exact
   single-palette layout, word-8 UV fetch, `0x00FF` strip separators, `c13+a0..c15+a0` model block,
-  and `c9..c12` projection block.
+  and `c9..c12` projection block. The `3094A52CE2571823 / 969CA710A35A4251` non-indexed stride-8
+  attrs-2 effect/post quad is mapped through exact position/UV fetches and the shader's
+  `x=2*(x+c0.x)+c255.x`, `y=-2*(y+c0.y)+c255.y`, `z=z`, `w=w` projection formula.
 - Replay the `DE7F9AF93C668314 / 8CBAD34FCE165328` constant-selector quad family by reading the
   selector stream and captured `c7..c18` position/color/UV constants.
 - Replay the first no-color depth rectangle family into a native D3D11 depth target while guarding
@@ -206,7 +209,9 @@ The native-renderer code is a sidecar first, replacement renderer later. Today i
 Near-term work:
 
 - Capture battle/gameplay priority samples without multi-GB JSON logs.
-- Map stride-8/9/10 vertex layouts, indexed triangle strips, shader constants, and shader transforms.
+- Map the next indexed transform blocker
+  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, then continue through stride-7/8/9/10 vertex
+  layouts, indexed triangle strips, shader constants, and shader transforms.
 - Correlate runtime draws with decoded G1M stage, character, weapon, and material records.
 - Own render targets and final presentation.
 - Add native graphics options such as MSAA/post-AA after render targets are owned.

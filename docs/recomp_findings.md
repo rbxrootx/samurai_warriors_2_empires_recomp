@@ -753,9 +753,23 @@
   `native_supported=1408..1409`, `native_projected=658..659`, and unsupported buckets down to
   `0/5/1/0/18`, then wrote
   `extracted\native_render_samples\native_b21c_projected_standard_20260718-065307.bmp` using `1398`
-  captured D3D11 draws. The current repeated transform blocker is
-  `VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251`, non-indexed stride-8 attrs-2; the repeated layout
-  blocker is `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+  captured D3D11 draws.
+- The non-indexed stride-8 `VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251` effect/post quad family
+  is now mapped behind an exact two-attribute layout gate (`fmt38@w0->t1i1m15u15s1672`,
+  `fmt37@w4->t1i0m3u3s2312`) and a direct shader projection:
+  `x=2*(x+c0.x)+c255.x`, `y=-2*(y+c0.y)+c255.y`, `z=z`, `w=w`. Evidence comes from the bounded
+  `runtime.native-transform-probe-20260718-065854.log` shader/sample pass; later no-JSON runs did
+  not hit that pair again on the same route, so this is a mapped replay path awaiting its next live
+  appearance rather than a fresh standard-counter reduction.
+- The next observed indexed transform lead is
+  `VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, an indexed strip with `index_count=18` and
+  texture `c0`. Its vertex shader uses `c15+a0..c17+a0` model rows and `c11..c14` projection rows,
+  but the exact vertex-fetch layout still needs one clean compact reject-layout hit before promotion.
+  The repeated layout blocker is still `VS=0x5A550226A224F581 / PS=0x7703E4142DFBD4D4`.
+- Projected transform reject logs now include compact vertex-fetch layout details (`vfetch_c`,
+  stride, attribute signature, and the first four attributes) beside the rejection reason. The
+  transform probe wrapper also skips malformed trailing `samples.jsonl` rows so a timed forced-close
+  does not make a successful capped runtime probe look like a failed run.
 
 ## Save And Storage Path
 

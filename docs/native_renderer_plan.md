@@ -1266,9 +1266,25 @@ gameplay frames with `native_supported=1408..1409`, `native_tex=728`, `native_so
 `extracted\native_render_samples\native_b21c_projected_standard_20260718-065307.bmp` using `1398`
 captured D3D11 draws.
 
-The next repeated transform blocker in the standard gameplay pass is
-`VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251`, a non-indexed stride-8 attrs-2 family with
-`attr_sig=0xBA6F4B89B307862B` and eight texture fetches. The repeated layout blocker is still
+The non-indexed stride-8 `VS=0x3094A52CE2571823 / PS=0x969CA710A35A4251` effect/post quad family is
+now mapped behind an exact two-attribute layout gate: position
+`fmt38@w0->t1i1m15u15s1672` and UV `fmt37@w4->t1i0m3u3s2312`
+(`attr_sig=0xBA6F4B89B307862B`). Ucode validation from
+`runtime.native-transform-probe-20260718-065854.log` shows the shader writes clip space directly:
+`clip.x = 2 * (vertex.x + c0.x) + c255.x`, `clip.y = -2 * (vertex.y + c0.y) + c255.y`,
+`clip.z = vertex.z`, and `clip.w = vertex.w`; sampled constants used `c255=(-1,1,0,0)` and a
+small half-pixel-style `c0` offset on some draws. The pixel shader is a multi-tap/effect composite
+over `tf0`, so the current native replay treats it as visibility scaffolding, not a final native
+post-processing implementation. Later broad no-JSON probes did not hit this pair again on the same
+route, but the exact decoder/projection path now exists for the next time the family appears.
+
+The latest capped blocker pass also exposed an indexed transform lead:
+`VS=0x2E01DF902B14A323 / PS=0xD10452A3E31F9C61`, primitive `triangle_strip`, `index_count=18`,
+texture `c0`, and D104 alpha/color modulation. The vertex ucode fetches a palette/index byte,
+`r6.xyz1` from offset 0, another vector at offset 3, and packed data at offset 6, then applies
+`c15+a0..c17+a0` model rows and projects through `c11..c14`. A focused run with the new compact
+reject-layout logging did not reproduce the pair before the probe deadline, so the exact vertex
+layout still needs one clean layout hit before promotion. The repeated layout blocker is still
 `VS=0x5A550226A224F581` / `PS=0x7703E4142DFBD4D4`, an indexed stride-7 attrs-1 family. The single
 indexed layout gap, five shape gaps, remaining transform families, and native render-target
 composition still block full native scene ownership.
@@ -1290,11 +1306,11 @@ work should proceed in this order:
    no-color draw shapes still need targeted capture before full ownership.
 3. Capture and classify one gameplay/battle scene with focused shader filters and bounded shader
    dumps. Compatible triangle strips plus the D5, 1C9E, 1B2E, A395, 45C4, 6B72, ED8D, 6E10, 83BD,
-   and B21C projected transform families can now be replayed; the remaining big gameplay gap is
-   decoding the 3094 non-indexed stride-8 family, the stride-7 layout blocker, other stride-8/9/10/11
-   model vertex layouts, shader constants, and shader transforms rather than primitive expansion alone. Use
-   gap-only samples, OBJ previews, and ucode dumps to keep that work bounded and visually
-   inspectable.
+   B21C, and 3094 projected/effect families now have native replay paths; the remaining big gameplay
+   gap is the `2E01DF902B14A323 / D10452A3E31F9C61` indexed transform family, the stride-7 layout
+   blocker, other stride-8/9/10/11 model vertex layouts, shader constants, and shader transforms
+   rather than primitive expansion alone. Use gap-only samples, compact reject-layout logs, OBJ
+   previews, and ucode dumps to keep that work bounded and visually inspectable.
 4. Generalize texture decode/upload beyond the first confirmed linear BC3 and tiled `k_8_8_8_8`
    paths: additional Xenos formats, mip tails, arrays, swizzles, and render-target ownership.
 5. Decode dumped battle/stage vertex and index samples using the observed fetch layout and compare

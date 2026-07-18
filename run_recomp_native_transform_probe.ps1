@@ -300,7 +300,15 @@ $sampleSupportCounts = @()
 $sampleVertexConstantRows = 0
 $samplePixelConstantRows = 0
 if (Test-Path $sampleManifest) {
-  $sampleRows = @(Get-Content -Path $sampleManifest | ForEach-Object { $_ | ConvertFrom-Json })
+  $sampleRows = @(
+    Get-Content -Path $sampleManifest | ForEach-Object {
+      try {
+        $_ | ConvertFrom-Json
+      } catch {
+        Write-Warning "Skipping malformed sample manifest row: $($_.Exception.Message)"
+      }
+    }
+  )
   $sampleRowCount = $sampleRows.Count
   $sampleKindCounts = @($sampleRows | Group-Object kind | Sort-Object Count -Descending |
     ForEach-Object { "$($_.Name)=$($_.Count)" })
