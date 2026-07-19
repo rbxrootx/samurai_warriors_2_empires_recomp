@@ -30,6 +30,8 @@ constexpr uint32_t kEndian8In32 = 2;
 constexpr uint32_t kEndian16In32 = 3;
 constexpr uint32_t kXenosFormat8888 = 6;
 constexpr uint32_t kXenosFormatDxt45 = 20;
+constexpr uint32_t kXenosFormat16_16_16_16Float = 32;
+constexpr uint32_t kXenosFormat32Float = 36;
 
 struct BmpFileHeader {
   uint16_t signature = 0x4D42;
@@ -204,6 +206,60 @@ std::vector<uint8_t> BuildPcRgba8TextureBytes(const ReplayTexture& texture) {
       }
       CopySwapBlock(texture.endian, output.data() + output_offset, texture_bytes.data() + input_offset,
                     4);
+    }
+  }
+  return output;
+}
+
+std::vector<uint8_t> BuildPcFloat32TextureBytes(const ReplayTexture& texture) {
+  const std::vector<uint8_t>& texture_bytes = ReplayTextureBytes(texture);
+  std::vector<uint8_t> output(size_t(texture.width) * texture.height * 4u);
+  if (texture.width == 0 || texture.height == 0) {
+    return output;
+  }
+
+  const uint32_t pitch_texels =
+      texture.row_pitch_bytes ? std::max(texture.row_pitch_bytes / 4u, texture.width) : texture.width;
+  for (uint32_t y = 0; y < texture.height; ++y) {
+    for (uint32_t x = 0; x < texture.width; ++x) {
+      const size_t output_offset = (size_t(y) * texture.width + x) * 4u;
+      const size_t input_offset =
+          texture.tiled ? TiledOffset2D(x, y, pitch_texels, 2)
+                        : size_t(y) * texture.row_pitch_bytes + x * 4u;
+      if (input_offset + 4u > texture_bytes.size() || output_offset + 4u > output.size()) {
+        continue;
+      }
+      CopySwapBlock(texture.endian, output.data() + output_offset, texture_bytes.data() + input_offset,
+                    4);
+    }
+  }
+  return output;
+}
+
+std::vector<uint8_t> BuildPcFloat16x4TextureBytes(const ReplayTexture& texture) {
+  const std::vector<uint8_t>& texture_bytes = ReplayTextureBytes(texture);
+  constexpr uint32_t kBytesPerTexel = 8;
+  std::vector<uint8_t> output(size_t(texture.width) * texture.height * kBytesPerTexel);
+  if (texture.width == 0 || texture.height == 0) {
+    return output;
+  }
+
+  const uint32_t pitch_texels = texture.row_pitch_bytes
+                                    ? std::max(texture.row_pitch_bytes / kBytesPerTexel,
+                                               texture.width)
+                                    : texture.width;
+  for (uint32_t y = 0; y < texture.height; ++y) {
+    for (uint32_t x = 0; x < texture.width; ++x) {
+      const size_t output_offset = (size_t(y) * texture.width + x) * kBytesPerTexel;
+      const size_t input_offset =
+          texture.tiled ? TiledOffset2D(x, y, pitch_texels, 3)
+                        : size_t(y) * texture.row_pitch_bytes + x * kBytesPerTexel;
+      if (input_offset + kBytesPerTexel > texture_bytes.size() ||
+          output_offset + kBytesPerTexel > output.size()) {
+        continue;
+      }
+      CopySwapBlock(texture.endian, output.data() + output_offset,
+                    texture_bytes.data() + input_offset, kBytesPerTexel);
     }
   }
   return output;
@@ -653,6 +709,16 @@ struct ReplayD3D11Pipeline {
       upload_pitch_bytes = draw.texture.width * 4u;
       upload_slice_pitch_bytes = upload_pitch_bytes * draw.texture.height;
       pc_texture_bytes = BuildPcRgba8TextureBytes(draw.texture);
+    } else if (draw.texture.format == kXenosFormat16_16_16_16Float) {
+      texture_format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      upload_pitch_bytes = draw.texture.width * 8u;
+      upload_slice_pitch_bytes = upload_pitch_bytes * draw.texture.height;
+      pc_texture_bytes = BuildPcFloat16x4TextureBytes(draw.texture);
+    } else if (draw.texture.format == kXenosFormat32Float) {
+      texture_format = DXGI_FORMAT_R32_FLOAT;
+      upload_pitch_bytes = draw.texture.width * 4u;
+      upload_slice_pitch_bytes = upload_pitch_bytes * draw.texture.height;
+      pc_texture_bytes = BuildPcFloat32TextureBytes(draw.texture);
     }
     if (texture_format == DXGI_FORMAT_UNKNOWN || pc_texture_bytes.empty()) {
       REXLOG_WARN("SW2E native GPU replay skipped frame {} draw {} unsupported texture format {}",

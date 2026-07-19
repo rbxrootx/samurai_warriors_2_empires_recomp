@@ -18,6 +18,7 @@ struct FunctionInfo {
   std::string_view label;
   FunctionConfidence confidence;
   std::string_view notes;
+  std::string_view source_path;
 };
 
 std::span<const FunctionInfo> KnownFunctions();
